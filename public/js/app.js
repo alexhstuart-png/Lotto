@@ -298,9 +298,9 @@
         ${header()}
         <div class="card login-card">
           <label>Email</label>
-          <input id="loginEmail" type="email" autocomplete="email" inputmode="email" placeholder="you@work.com">
+          <input id="loginEmail" type="email" autocomplete="email" inputmode="email">
           <label>Password</label>
-          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Syndicate password">
+          <input id="loginPassword" type="password" autocomplete="current-password">
           <div class="form-msg error" id="loginMsg"></div>
           <button class="btn" id="loginBtn">Log In</button>
         </div>

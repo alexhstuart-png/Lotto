@@ -132,3 +132,8 @@ without a service role key:
   requests carrying the matching `x-app-secret` header, which the Netlify
   Functions attach; the anon key alone can access nothing. With a service
   role key configured, skip 003 entirely — the key bypasses RLS.
+
+> Note: when setting env vars through the Netlify API/MCP, avoid the
+> "secret" flag — secret-flagged writes have been observed not to persist.
+> Use regular env vars (they're still server-side only) and remember that
+> functions pick up env changes only on the next deploy.

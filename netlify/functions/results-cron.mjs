@@ -10,7 +10,7 @@
 // failure: mark the draw "results pending - auto retrieve failed" and email
 // the admin one alert (logged in email_logs). Never crashes.
 
-import { supabase, must } from '../../lib/db.mjs';
+import { supabase, must, T } from '../../lib/db.mjs';
 import { perthDateString } from '../../lib/reminders.mjs';
 import { fetchResultWithRetries } from '../../lib/results-service.mjs';
 import { saveResultsAndProcess } from '../../lib/results-pipeline.mjs';
@@ -21,14 +21,14 @@ async function findDrawAwaitingResults() {
   // UTC: draw dates are Perth calendar Thursdays.
   const today = perthDateString();
   const draws = must(
-    await supabase().from('draws').select('*')
+    await supabase().from(T('draws')).select('*')
       .lte('draw_date', today)
       .order('draw_date', { ascending: false })
       .limit(5)
   );
   for (const d of draws) {
     const result = must(
-      await supabase().from('results').select('id').eq('draw_id', d.id).maybeSingle()
+      await supabase().from(T('results')).select('id').eq('draw_id', d.id).maybeSingle()
     );
     if (!result) return d; // most recent past draw with no results yet
   }
@@ -39,12 +39,12 @@ async function alertAdmin(draw, attempts, lastError) {
   // One alert per draw failure: skip if we already logged one for this draw today.
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const prior = must(
-    await supabase().from('email_logs').select('id')
+    await supabase().from(T('email_logs')).select('id')
       .eq('type', 'admin_alert').eq('draw_id', draw.id).eq('status', 'sent')
       .gte('sent_at', since)
   );
   if (prior.length > 0) return;
-  const admins = must(await supabase().from('members').select('*').eq('role', 'admin').eq('is_active', true));
+  const admins = must(await supabase().from(T('members')).select('*').eq('role', 'admin').eq('is_active', true));
   const alertTo = process.env.ADMIN_ALERT_EMAIL
     ? [{ email: process.env.ADMIN_ALERT_EMAIL, id: null }]
     : admins.map((a) => ({ email: a.email, id: a.id }));
@@ -69,7 +69,7 @@ export default async function handler() {
     if (!outcome.ok) {
       console.error(`Results retrieval failed for draw ${draw.draw_date}: ${outcome.lastError}`);
       must(
-        await supabase().from('draws').update({ status: 'results_pending_failed' })
+        await supabase().from(T('draws')).update({ status: 'results_pending_failed' })
           .eq('id', draw.id).select().single()
       );
       await alertAdmin(draw, outcome.attempts, outcome.lastError);
@@ -85,7 +85,7 @@ export default async function handler() {
       const msg = `Scraped draw date ${outcome.drawDate} does not match our draw ${draw.draw_date}`;
       console.error(msg);
       must(
-        await supabase().from('draws').update({ status: 'results_pending_failed' })
+        await supabase().from(T('draws')).update({ status: 'results_pending_failed' })
           .eq('id', draw.id).select().single()
       );
       await alertAdmin(draw, outcome.attempts, msg);
@@ -93,7 +93,7 @@ export default async function handler() {
     }
 
     if (draw.draw_number == null && outcome.drawNumber != null) {
-      await supabase().from('draws').update({ draw_number: outcome.drawNumber }).eq('id', draw.id);
+      await supabase().from(T('draws')).update({ draw_number: outcome.drawNumber }).eq('id', draw.id);
     }
 
     const saved = await saveResultsAndProcess({

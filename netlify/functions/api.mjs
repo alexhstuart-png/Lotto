@@ -6,6 +6,7 @@
 
 import bcrypt from 'bcryptjs';
 import {
+  T,
   supabase, must, chargeDb, getSettings, auditLog,
   memberBalanceCents, memberBalancesCents, kittyBalanceCents,
 } from '../../lib/db.mjs';
@@ -42,20 +43,20 @@ async function readBody(req) {
 
 /** Full detail for one draw: ticket, games, results, live matching. */
 async function drawDetail(draw) {
-  const ticket = must(await supabase().from('tickets').select('*').eq('draw_id', draw.id).maybeSingle());
+  const ticket = must(await supabase().from(T('tickets')).select('*').eq('draw_id', draw.id).maybeSingle());
   let games = [];
   if (ticket) {
     games = must(
-      await supabase().from('games').select('id, game_index, numbers, powerball')
+      await supabase().from(T('games')).select('id, game_index, numbers, powerball')
         .eq('ticket_id', ticket.id).order('game_index')
     );
   }
-  const result = must(await supabase().from('results').select('*').eq('draw_id', draw.id).maybeSingle());
+  const result = must(await supabase().from(T('results')).select('*').eq('draw_id', draw.id).maybeSingle());
   let matching = null;
   if (result && games.length > 0) {
     matching = matchTicket(games, { numbers: result.numbers, powerball: result.powerball });
   }
-  const winnings = must(await supabase().from('winnings').select('*').eq('draw_id', draw.id));
+  const winnings = must(await supabase().from(T('winnings')).select('*').eq('draw_id', draw.id));
   return {
     draw,
     ticket: ticket ? {
@@ -74,7 +75,7 @@ async function drawDetail(draw) {
 
 async function latestDraw() {
   const draws = must(
-    await supabase().from('draws').select('*').order('draw_date', { ascending: false }).limit(1)
+    await supabase().from(T('draws')).select('*').order('draw_date', { ascending: false }).limit(1)
   );
   return draws[0] ?? null;
 }
@@ -90,7 +91,7 @@ async function handleLogin(req) {
     return err('Email and password required', 400);
   }
   const member = must(
-    await supabase().from('members').select('*').eq('email', cleanEmail).maybeSingle()
+    await supabase().from(T('members')).select('*').eq('email', cleanEmail).maybeSingle()
   );
   // Constant-shaped failure: same message whether email or password was wrong.
   const fail = () => err('Invalid email or password', 401);
@@ -110,7 +111,7 @@ async function handleLogin(req) {
 }
 
 async function handleMe(session) {
-  const member = must(await supabase().from('members').select('*').eq('id', session.memberId).maybeSingle());
+  const member = must(await supabase().from(T('members')).select('*').eq('id', session.memberId).maybeSingle());
   if (!member || !member.is_active) return err('Not authenticated', 401);
   return json({
     member: {
@@ -128,7 +129,7 @@ async function handleHome(session) {
   ]);
   const settings = await getSettings();
   const detail = draw ? await drawDetail(draw) : null;
-  const totalWinningsRows = must(await supabase().from('winnings').select('amount_cents'));
+  const totalWinningsRows = must(await supabase().from(T('winnings')).select('amount_cents'));
   const totalWinnings = totalWinningsRows.reduce((s, r) => s + r.amount_cents, 0);
   return json({
     balance_cents: balance,
@@ -141,7 +142,7 @@ async function handleHome(session) {
 
 async function handleHistory() {
   const draws = must(
-    await supabase().from('draws').select('*').order('draw_date', { ascending: false }).limit(52)
+    await supabase().from(T('draws')).select('*').order('draw_date', { ascending: false }).limit(52)
   );
   const items = [];
   for (const d of draws) items.push(await drawDetail(d));
@@ -149,9 +150,9 @@ async function handleHistory() {
 }
 
 async function handleAccount(session) {
-  const member = must(await supabase().from('members').select('*').eq('id', session.memberId).single());
+  const member = must(await supabase().from(T('members')).select('*').eq('id', session.memberId).single());
   const txns = must(
-    await supabase().from('transactions')
+    await supabase().from(T('transactions'))
       .select('id, type, amount_cents, note, created_at, draw_id')
       .eq('member_id', session.memberId)
       .order('created_at', { ascending: false }).limit(100)
@@ -173,7 +174,7 @@ async function handleNotificationsToggle(session, req) {
   const { enabled } = await readBody(req);
   if (typeof enabled !== 'boolean') return err('enabled must be true or false');
   must(
-    await supabase().from('members').update({ notifications_enabled: enabled })
+    await supabase().from(T('members')).update({ notifications_enabled: enabled })
       .eq('id', session.memberId).select().single()
   );
   return json({ ok: true, notifications_enabled: enabled });
@@ -182,22 +183,22 @@ async function handleNotificationsToggle(session, req) {
 // --- Admin ---------------------------------------------------------------
 
 async function adminOverview() {
-  const members = must(await supabase().from('members').select('*').order('name'));
+  const members = must(await supabase().from(T('members')).select('*').order('name'));
   const balances = await memberBalancesCents(members.map((m) => m.id));
   const kitty = await kittyBalanceCents();
   const settings = await getSettings();
   const draws = must(
-    await supabase().from('draws').select('*').order('draw_date', { ascending: false }).limit(20)
+    await supabase().from(T('draws')).select('*').order('draw_date', { ascending: false }).limit(20)
   );
   const drawDetails = [];
   for (const d of draws) drawDetails.push(await drawDetail(d));
   const emailLogs = must(
-    await supabase().from('email_logs')
+    await supabase().from(T('email_logs'))
       .select('id, type, to_email, subject, status, sent_at')
       .order('sent_at', { ascending: false }).limit(30)
   );
   const kittyTxns = must(
-    await supabase().from('kitty_transactions').select('*')
+    await supabase().from(T('kitty_transactions')).select('*')
       .order('created_at', { ascending: false }).limit(50)
   );
   return json({
@@ -219,7 +220,7 @@ async function adminCreateMember(session, req) {
   const name = validateName(body.name);
   const email = validateEmail(body.email);
   if (!name || !email) return err('Valid name and email required');
-  const { data, error } = await supabase().from('members')
+  const { data, error } = await supabase().from(T('members'))
     .insert({ name, email, role: 'member' }).select().single();
   if (error) return err(error.code === '23505' ? 'A member with that email already exists' : 'Could not create member');
   await auditLog({ actorId: session.memberId, action: 'member_created', entity: 'members', entityId: data.id, details: { name, email } });
@@ -250,7 +251,7 @@ async function adminUpdateMember(session, req, memberId) {
     patch.notifications_enabled = body.notifications_enabled;
   }
   if (Object.keys(patch).length === 0) return err('Nothing to update');
-  const { data, error } = await supabase().from('members').update(patch).eq('id', id).select().single();
+  const { data, error } = await supabase().from(T('members')).update(patch).eq('id', id).select().single();
   if (error) return err('Could not update member');
   await auditLog({ actorId: session.memberId, action: 'member_updated', entity: 'members', entityId: id, details: patch });
   return json({ member: data });
@@ -265,7 +266,7 @@ async function adminCreateDraw(session, req) {
   if (dow !== 4) return err('Powerball draws are on Thursdays — pick a Thursday date');
   const drawNumber = body.draw_number === undefined || body.draw_number === null
     ? null : validateCents(body.draw_number, { max: 100000 });
-  const { data, error } = await supabase().from('draws')
+  const { data, error } = await supabase().from(T('draws'))
     .insert({ draw_date: drawDate, draw_number: drawNumber }).select().single();
   if (error) return err(error.code === '23505' ? 'A draw for that date already exists' : 'Could not create draw');
   await auditLog({ actorId: session.memberId, action: 'draw_created', entity: 'draws', entityId: data.id, details: { drawDate } });
@@ -288,28 +289,28 @@ async function adminSaveTicket(session, req) {
     if (!v.ok) return err(`Game ${i + 1}: ${v.error}`);
     games.push({ game_index: i + 1, numbers: v.numbers, powerball: v.powerball });
   }
-  const draw = must(await supabase().from('draws').select('*').eq('id', drawId).maybeSingle());
+  const draw = must(await supabase().from(T('draws')).select('*').eq('id', drawId).maybeSingle());
   if (!draw) return err('Draw not found', 404);
 
-  let ticket = must(await supabase().from('tickets').select('*').eq('draw_id', drawId).maybeSingle());
+  let ticket = must(await supabase().from(T('tickets')).select('*').eq('draw_id', drawId).maybeSingle());
   const editingPublished = ticket && ticket.status === 'published';
   let previousGames = null;
   if (ticket) {
     if (editingPublished) {
       previousGames = must(
-        await supabase().from('games').select('game_index, numbers, powerball')
+        await supabase().from(T('games')).select('game_index, numbers, powerball')
           .eq('ticket_id', ticket.id).order('game_index')
       );
     }
-    must(await supabase().from('tickets').update({ cost_cents: costCents }).eq('id', ticket.id).select().single());
-    const { error: delErr } = await supabase().from('games').delete().eq('ticket_id', ticket.id);
+    must(await supabase().from(T('tickets')).update({ cost_cents: costCents }).eq('id', ticket.id).select().single());
+    const { error: delErr } = await supabase().from(T('games')).delete().eq('ticket_id', ticket.id);
     if (delErr) return err('Could not update games');
   } else {
     ticket = must(
-      await supabase().from('tickets').insert({ draw_id: drawId, cost_cents: costCents }).select().single()
+      await supabase().from(T('tickets')).insert({ draw_id: drawId, cost_cents: costCents }).select().single()
     );
   }
-  const { error: insErr } = await supabase().from('games')
+  const { error: insErr } = await supabase().from(T('games'))
     .insert(games.map((g) => ({ ...g, ticket_id: ticket.id })));
   if (insErr) return err('Could not save games');
 
@@ -327,11 +328,11 @@ async function adminSaveTicket(session, req) {
 async function adminPublishTicket(session, req, ticketId) {
   const id = validateUuid(ticketId);
   if (!id) return err('Invalid ticket id');
-  const ticket = must(await supabase().from('tickets').select('*').eq('id', id).maybeSingle());
+  const ticket = must(await supabase().from(T('tickets')).select('*').eq('id', id).maybeSingle());
   if (!ticket) return err('Ticket not found', 404);
-  const draw = must(await supabase().from('draws').select('*').eq('id', ticket.draw_id).single());
+  const draw = must(await supabase().from(T('draws')).select('*').eq('id', ticket.draw_id).single());
   const games = must(
-    await supabase().from('games').select('game_index, numbers, powerball')
+    await supabase().from(T('games')).select('game_index, numbers, powerball')
       .eq('ticket_id', id).order('game_index')
   );
   if (games.length === 0) return err('Add at least one game before publishing');
@@ -341,14 +342,14 @@ async function adminPublishTicket(session, req, ticketId) {
 
   if (firstPublish) {
     must(
-      await supabase().from('tickets').update({
+      await supabase().from(T('tickets')).update({
         status: 'published',
         published_at: new Date().toISOString(),
         published_by: session.memberId,
       }).eq('id', id).select().single()
     );
     if (['upcoming'].includes(draw.status)) {
-      must(await supabase().from('draws').update({ status: 'waiting_results' }).eq('id', draw.id).select().single());
+      must(await supabase().from(T('draws')).update({ status: 'waiting_results' }).eq('id', draw.id).select().single());
     }
   } else {
     await auditLog({
@@ -359,7 +360,7 @@ async function adminPublishTicket(session, req, ticketId) {
   // Charge active members — duplicate-protected by the DB unique index, so a
   // re-publish (or double-click) can never charge anyone twice for this draw.
   let chargeSummary = { charged: [], skipped: [] };
-  const allMembers = must(await supabase().from('members').select('*'));
+  const allMembers = must(await supabase().from(T('members')).select('*'));
   const activeMembers = allMembers.filter((m) => m.is_active);
   if (settings.charge_on_publish) {
     chargeSummary = await chargeMembersForDraw(
@@ -369,12 +370,12 @@ async function adminPublishTicket(session, req, ticketId) {
 
   // Kitty pays for the ticket — also exactly once per draw.
   const existingCost = must(
-    await supabase().from('kitty_transactions').select('id')
+    await supabase().from(T('kitty_transactions')).select('id')
       .eq('draw_id', draw.id).eq('type', 'ticket_cost')
   );
   if (existingCost.length === 0 && ticket.cost_cents > 0) {
     must(
-      await supabase().from('kitty_transactions').insert({
+      await supabase().from(T('kitty_transactions')).insert({
         type: 'ticket_cost', amount_cents: -ticket.cost_cents, draw_id: draw.id,
         note: `Powerball ticket ${draw.draw_date}`, created_by: session.memberId,
       }).select().single()
@@ -434,16 +435,16 @@ async function adminRecordPayment(session, req) {
   const amount = validateCents(body.amount_cents);
   if (!memberId || amount === null || amount === 0) return err('member_id and a positive amount_cents required');
   const note = typeof body.note === 'string' ? body.note.slice(0, 200) : 'Payment received';
-  const member = must(await supabase().from('members').select('id, name').eq('id', memberId).maybeSingle());
+  const member = must(await supabase().from(T('members')).select('id, name').eq('id', memberId).maybeSingle());
   if (!member) return err('Member not found', 404);
   // Payment credits the member's ledger AND lands in the kitty.
   must(
-    await supabase().from('transactions').insert({
+    await supabase().from(T('transactions')).insert({
       member_id: memberId, type: 'payment', amount_cents: amount, note, created_by: session.memberId,
     }).select().single()
   );
   must(
-    await supabase().from('kitty_transactions').insert({
+    await supabase().from(T('kitty_transactions')).insert({
       type: 'member_payment', amount_cents: amount, member_id: memberId, note, created_by: session.memberId,
     }).select().single()
   );
@@ -458,7 +459,7 @@ async function adminAdjustment(session, req) {
   if (!note) return err('A note explaining the adjustment is required');
   if (body.target === 'kitty') {
     must(
-      await supabase().from('kitty_transactions').insert({
+      await supabase().from(T('kitty_transactions')).insert({
         type: 'adjustment', amount_cents: amount, note, created_by: session.memberId,
       }).select().single()
     );
@@ -466,7 +467,7 @@ async function adminAdjustment(session, req) {
     const memberId = validateUuid(body.member_id);
     if (!memberId) return err('member_id required for a member adjustment');
     must(
-      await supabase().from('transactions').insert({
+      await supabase().from(T('transactions')).insert({
         member_id: memberId, type: 'adjustment', amount_cents: amount, note, created_by: session.memberId,
       }).select().single()
     );
@@ -484,25 +485,25 @@ async function adminConfirmWinnings(session, req) {
   if (body.division != null && (division === null || division < 1)) return err('division must be 1-9');
   const gameIndex = body.game_index == null ? null : validateCents(body.game_index, { max: 50 });
   const addToKitty = body.add_to_kitty === true;
-  const draw = must(await supabase().from('draws').select('*').eq('id', drawId).maybeSingle());
+  const draw = must(await supabase().from(T('draws')).select('*').eq('id', drawId).maybeSingle());
   if (!draw) return err('Draw not found', 404);
 
   const winning = must(
-    await supabase().from('winnings').insert({
+    await supabase().from(T('winnings')).insert({
       draw_id: drawId, game_index: gameIndex, division, amount_cents: amount,
       added_to_kitty: addToKitty, confirmed_by: session.memberId,
     }).select().single()
   );
   if (addToKitty) {
     must(
-      await supabase().from('kitty_transactions').insert({
+      await supabase().from(T('kitty_transactions')).insert({
         type: 'winnings', amount_cents: amount, draw_id: drawId,
         note: `Winnings${division ? ` (Div ${division})` : ''} — draw ${draw.draw_date}`,
         created_by: session.memberId,
       }).select().single()
     );
   }
-  must(await supabase().from('draws').update({ status: 'winner' }).eq('id', drawId).select().single());
+  must(await supabase().from(T('draws')).update({ status: 'winner' }).eq('id', drawId).select().single());
   await auditLog({
     actorId: session.memberId, action: 'winnings_confirmed', entity: 'winnings', entityId: winning.id,
     details: { amount, division, addToKitty },
@@ -514,10 +515,10 @@ async function adminAnnounceWin(session, req) {
   const body = await readBody(req);
   const winningId = validateUuid(body.winning_id);
   if (!winningId) return err('winning_id required');
-  const winning = must(await supabase().from('winnings').select('*').eq('id', winningId).maybeSingle());
+  const winning = must(await supabase().from(T('winnings')).select('*').eq('id', winningId).maybeSingle());
   if (!winning) return err('Winning not found', 404);
-  const draw = must(await supabase().from('draws').select('*').eq('id', winning.draw_id).single());
-  const members = selectBroadcastAudience(must(await supabase().from('members').select('*')));
+  const draw = must(await supabase().from(T('draws')).select('*').eq('id', winning.draw_id).single());
+  const members = selectBroadcastAudience(must(await supabase().from(T('members')).select('*')));
   let emailed = 0;
   for (const m of members) {
     const tpl = announceWinEmail({
@@ -559,7 +560,7 @@ async function adminSettings(session, req) {
   }
   if (Object.keys(patch).length === 0) return err('Nothing to update');
   patch.updated_at = new Date().toISOString();
-  must(await supabase().from('settings').update(patch).eq('id', 1).select().single());
+  must(await supabase().from(T('settings')).update(patch).eq('id', 1).select().single());
   await auditLog({ actorId: session.memberId, action: 'settings_updated', entity: 'settings', details: patch });
   return json({ ok: true });
 }
@@ -590,7 +591,7 @@ export default async function handler(req) {
     const session = sessionFromRequest(req);
     if (!session) return err('Not authenticated', 401);
     const live = must(
-      await supabase().from('members').select('role, is_active').eq('id', session.memberId).maybeSingle()
+      await supabase().from(T('members')).select('role, is_active').eq('id', session.memberId).maybeSingle()
     );
     if (!live || !live.is_active) {
       return json({ error: 'Not authenticated' }, 401, { 'Set-Cookie': clearSessionCookie() });

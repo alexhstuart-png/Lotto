@@ -112,3 +112,18 @@ rotate both passwords afterwards (SQL in the script's footer comment).
   — runs the DB-constraint scenarios (re-publish no double charge, scraper
   re-run no duplicate rows, manual-overrides-scraped with recompute) against
   a real Supabase project, then cleans up after itself.
+
+## Appendix: shared-project deployment options
+
+Two extra env vars support deploying into a shared Supabase project or
+without a service role key:
+
+- `TABLE_PREFIX` (e.g. `lotto_`) — all tables are read/written with this
+  prefix. Apply the migrations with the same prefix on the table names.
+- Anon-key gateway — when the service role key can't be provisioned, run
+  `supabase/migrations/003_anon_gateway.sql`, store a long random secret in
+  `lotto_private.config`, and set `SUPABASE_ANON_KEY` + `SUPABASE_DB_SECRET`
+  instead of `SUPABASE_SERVICE_ROLE_KEY`. RLS policies grant access only to
+  requests carrying the matching `x-app-secret` header, which the Netlify
+  Functions attach; the anon key alone can access nothing. With a service
+  role key configured, skip 003 entirely — the key bypasses RLS.

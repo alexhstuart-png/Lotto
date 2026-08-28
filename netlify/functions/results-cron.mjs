@@ -11,12 +11,15 @@
 // the admin one alert (logged in email_logs). Never crashes.
 
 import { supabase, must } from '../../lib/db.mjs';
+import { perthDateString } from '../../lib/reminders.mjs';
 import { fetchResultWithRetries } from '../../lib/results-service.mjs';
 import { saveResultsAndProcess } from '../../lib/results-pipeline.mjs';
 import { sendEmail, adminScrapeFailedEmail } from '../../lib/email.mjs';
 
 async function findDrawAwaitingResults() {
-  const today = new Date().toISOString().slice(0, 10);
+  // "Today" in the syndicate's timezone (WA — Australia/Perth, UTC+8), not
+  // UTC: draw dates are Perth calendar Thursdays.
+  const today = perthDateString();
   const draws = must(
     await supabase().from('draws').select('*')
       .lte('draw_date', today)

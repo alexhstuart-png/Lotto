@@ -54,6 +54,111 @@
       <div class="tagline">Thursday Night Powerball</div>
     </header>`;
 
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ---------- login draw-reveal sequence ----------
+  // Plays only after a successful login (never on navigation or refresh),
+  // skipped entirely under prefers-reduced-motion, skippable with one tap,
+  // total run under 4 seconds. Transform/opacity animations only.
+
+  const reveal = { active: false, el: null, spinStart: 0, failsafe: 0 };
+
+  function drumMarkup() {
+    const balls = [
+      [80, 96, '#ffffff'], [112, 128, '#e9c46a'], [95, 140, '#e76f51'],
+      [124, 100, '#7dc4ff'], [88, 118, '#35c46f'], [112, 82, '#f3d27f'],
+    ].map(([cx, cy, fill], i) =>
+      `<circle class="drum-ball b${i}" cx="${cx}" cy="${cy}" r="9" fill="${fill}" stroke="rgba(0,0,0,0.25)"/>`
+    ).join('');
+    const sparks = Array.from({ length: 12 }, (_, i) => {
+      const a = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+      const d = 90 + Math.random() * 80;
+      return `<span class="spark" style="--dx:${Math.round(Math.cos(a) * d)}px;--dy:${Math.round(Math.sin(a) * d)}px"></span>`;
+    }).join('');
+    return `
+      <div class="reveal-inner">
+        <div class="drum-wrap">
+          <svg viewBox="0 0 200 225" aria-hidden="true">
+            <path d="M100 178 L66 214 M100 178 L134 214 M54 214 L146 214"
+                  stroke="#c9a227" stroke-width="6" stroke-linecap="round" fill="none"/>
+            <g class="drum-accel">
+              <g class="drum-spin">
+                <circle cx="100" cy="110" r="62" fill="none" stroke="rgba(233,196,106,0.35)"
+                        stroke-width="3" stroke-dasharray="18 14"/>
+                <path d="M100 48 V172 M38 110 H162" stroke="rgba(233,196,106,0.3)" stroke-width="3"/>
+                ${balls}
+              </g>
+            </g>
+            <circle cx="100" cy="110" r="70" fill="rgba(233,196,106,0.06)"
+                    stroke="#e9c46a" stroke-width="5"/>
+            <circle cx="100" cy="110" r="4" fill="#e9c46a"/>
+          </svg>
+        </div>
+        <div class="reveal-stage"></div>
+      </div>
+      <div class="reveal-flash"></div>
+      ${sparks}`;
+  }
+
+  function startReveal() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (reveal.active) return;
+    const el = document.createElement('div');
+    el.className = 'reveal-overlay';
+    el.innerHTML = drumMarkup();
+    document.body.appendChild(el);
+    reveal.active = true;
+    reveal.el = el;
+    reveal.spinStart = Date.now();
+    el.addEventListener('pointerdown', endReveal); // single tap anywhere skips
+    reveal.failsafe = setTimeout(endReveal, 8000); // never trap the user
+  }
+
+  function endReveal() {
+    if (!reveal.active) return;
+    reveal.active = false;
+    clearTimeout(reveal.failsafe);
+    const el = reveal.el;
+    reveal.el = null;
+    el.classList.add('reveal-fade');
+    setTimeout(() => el.remove(), 320);
+  }
+
+  /** Burst the drum and fly this week's numbers (or the kitty) in. */
+  async function revealSequence(homeData) {
+    if (!reveal.active) return;
+    const el = reveal.el;
+    // Let the drum spin ~2s total, counting from login.
+    await sleep(Math.max(0, reveal.spinStart + 2000 - Date.now()));
+    if (!reveal.active) return;
+    el.classList.add('burst');
+    await sleep(280);
+    if (!reveal.active) return;
+
+    const stage = el.querySelector('.reveal-stage');
+    const d = homeData.current;
+    let holdMs;
+    if (d && d.ticket && d.games.length) {
+      const matchById = new Map();
+      if (d.matching) for (const m of d.matching.matches) matchById.set(m.gameIndex, m);
+      const lines = d.games.map((g, i) => {
+        const line = gameLine(g, matchById.get(g.game_index) || null);
+        return line.replace('class="game-line"', `class="game-line" style="animation-delay:${i * 60}ms"`);
+      }).join('');
+      stage.innerHTML = `<div class="reveal-title display">This week's numbers</div>${lines}`;
+      holdMs = d.games.length * 60 + 420;
+    } else {
+      stage.innerHTML = `<div class="reveal-kitty">
+        <div class="label">In the kitty</div>
+        <div class="figure">${money(homeData.kitty_cents)}</div>
+      </div>`;
+      holdMs = 900;
+    }
+    el.classList.add('show-numbers');
+    await sleep(holdMs);
+    endReveal();
+  }
+
   // ---------- shared render pieces ----------
 
   const STATUS_LABELS = {
@@ -174,6 +279,7 @@
     try {
       await view();
     } catch (e) {
+      endReveal(); // never leave the reveal overlay up over an error
       if (e.message !== 'Not authenticated') {
         app.innerHTML = header() + `<div class="card"><p class="form-msg error">${esc(e.message)}</p></div>`;
       }
@@ -212,6 +318,7 @@
           },
         });
         me = data.member;
+        startReveal(); // draw-reveal plays on login only
         route('#/home');
       } catch (e) {
         msg.textContent = e.message;
@@ -226,6 +333,7 @@
 
   views.home = async () => {
     const data = await api('/home');
+    if (reveal.active) revealSequence(data); // continues on top while home renders below
     const d = data.current;
     const balCls = data.balance_cents < 0 ? 'owing' : 'credit';
     app.innerHTML = header() + `

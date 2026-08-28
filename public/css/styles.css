@@ -348,3 +348,85 @@ label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-
   padding: 10px 0 4px;
 }
 .official-strip .lbl { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; width: 100%; }
+
+/* ---------- login draw-reveal sequence ----------
+   Transform/opacity animations only (iPhone-smooth, no layout thrash).
+   Plays once after a successful login; a tap anywhere skips it. */
+
+.reveal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background:
+    radial-gradient(900px 500px at 50% 30%, rgba(233, 196, 106, 0.10), transparent 60%),
+    var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.reveal-overlay.reveal-fade { animation: reveal-out 0.3s ease forwards; }
+@keyframes reveal-out { to { opacity: 0; } }
+
+.reveal-inner { position: relative; width: 100%; max-width: 480px; padding: 24px; }
+
+/* the drum */
+.drum-wrap { width: min(62vw, 290px); margin: 0 auto; will-change: transform, opacity; }
+.drum-wrap svg { display: block; width: 100%; height: auto; }
+.drum-accel, .drum-spin, .drum-ball { transform-box: fill-box; transform-origin: center; }
+/* constant spin + an accelerating wrapper rotation layered on top */
+.drum-spin { animation: drum-rot 1.15s linear infinite; }
+.drum-accel { animation: drum-rot 2s ease-in infinite; }
+@keyframes drum-rot { to { transform: rotate(360deg); } }
+.drum-ball { animation: drum-tumble 0.45s ease-in-out infinite alternate; }
+.drum-ball.b1 { animation-duration: 0.38s; animation-delay: 0.10s; }
+.drum-ball.b2 { animation-duration: 0.52s; animation-delay: 0.05s; }
+.drum-ball.b3 { animation-duration: 0.42s; animation-delay: 0.15s; }
+.drum-ball.b4 { animation-duration: 0.48s; animation-delay: 0.02s; }
+.drum-ball.b5 { animation-duration: 0.36s; animation-delay: 0.20s; }
+@keyframes drum-tumble { from { transform: translate(0, 0); } to { transform: translate(4px, -8px); } }
+
+/* the bang */
+.burst .drum-wrap { animation: drum-bang 0.3s cubic-bezier(0.55, 0, 0.8, 0.4) forwards; }
+@keyframes drum-bang {
+  0%   { transform: scale(1);    opacity: 1; }
+  45%  { transform: scale(1.16); opacity: 1; }
+  100% { transform: scale(0.05); opacity: 0; }
+}
+.reveal-flash {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle at 50% 45%, rgba(233, 196, 106, 0.85), rgba(233, 196, 106, 0) 55%);
+}
+.burst .reveal-flash { animation: reveal-flash 0.45s ease-out forwards; }
+@keyframes reveal-flash { 0% { opacity: 0; } 25% { opacity: 0.85; } 100% { opacity: 0; } }
+.spark {
+  position: absolute; left: 50%; top: 45%;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--gold); opacity: 0; pointer-events: none;
+  will-change: transform, opacity;
+}
+.burst .spark { animation: spark-fly 0.55s cubic-bezier(0.2, 0.7, 0.4, 1) forwards; }
+@keyframes spark-fly {
+  0%   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.35); opacity: 0; }
+}
+
+/* numbers / kitty flying out of the burst */
+.reveal-stage {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px; pointer-events: none;
+}
+.reveal-stage .game-line { opacity: 0; width: min(86vw, 360px); will-change: transform, opacity; }
+.reveal-title, .reveal-kitty { opacity: 0; text-align: center; }
+.show-numbers .reveal-stage .game-line,
+.show-numbers .reveal-title,
+.show-numbers .reveal-kitty { animation: line-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.15) forwards; }
+@keyframes line-in {
+  from { opacity: 0; transform: translateY(-44px) scale(0.55); }
+  to   { opacity: 1; transform: none; }
+}
+.reveal-title { color: var(--gold); font-size: 19px; margin-bottom: 14px; letter-spacing: 0.06em; }
+.reveal-kitty .label { color: var(--muted); font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; }
+.reveal-kitty .figure { font-family: 'Anton', sans-serif; font-size: 52px; color: var(--gold); margin-top: 8px; }
+
+/* reduced motion: never show the overlay at all (JS also skips it) */
+@media (prefers-reduced-motion: reduce) {
+  .reveal-overlay { display: none !important; }
+}

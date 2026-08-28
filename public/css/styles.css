@@ -1,0 +1,350 @@
+/* Work Lotto Syndicate — design system
+   Dark navy ground, gold ticket stub, Anton display / Barlow body.
+   Mobile-first, tuned for iPhone (safe-area aware bottom nav). */
+
+:root {
+  --bg: #0b0f1e;
+  --bg-soft: #10162a;
+  --card: #161c30;
+  --card-2: #1b2340;
+  --line: #2a3352;
+  --text: #e8e6df;
+  --muted: #8b93ad;
+  --gold: #e9c46a;
+  --gold-deep: #c9a227;
+  --gold-ink: #1c1503;
+  --green: #35c46f;
+  --green-deep: #1f7a48;
+  --red: #e76f51;
+  --ball: #1d2540;
+  --radius: 14px;
+  --nav-h: 62px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Barlow', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 500px at 50% -200px, rgba(233, 196, 106, 0.08), transparent 60%),
+    var(--bg);
+}
+
+.display, h1, h2, h3 {
+  font-family: 'Anton', 'Arial Narrow', sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 18px 16px calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 24px);
+}
+
+/* ---------- header ---------- */
+.app-header { text-align: center; padding: 6px 0 16px; }
+.app-header .brand {
+  font-size: 26px;
+  color: var(--gold);
+  text-shadow: 0 2px 12px rgba(233, 196, 106, 0.25);
+}
+.app-header .tagline {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* ---------- cards & stats ---------- */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.card h2 { font-size: 15px; color: var(--muted); letter-spacing: 0.12em; margin-bottom: 12px; }
+
+.stat-row { display: flex; gap: 12px; }
+.stat {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  text-align: center;
+  margin-bottom: 14px;
+}
+.stat .label { color: var(--muted); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
+.stat .value { font-family: 'Anton', sans-serif; font-size: 28px; margin-top: 6px; color: var(--gold); }
+.stat .value.credit { color: var(--green); }
+.stat .value.owing { color: var(--red); }
+
+/* ---------- gold perforated ticket stub ---------- */
+.ticket-stub {
+  position: relative;
+  background: linear-gradient(160deg, #f3d27f 0%, var(--gold) 40%, var(--gold-deep) 100%);
+  color: var(--gold-ink);
+  border-radius: var(--radius);
+  padding: 18px 16px;
+  margin-bottom: 14px;
+  box-shadow: 0 10px 30px rgba(201, 162, 39, 0.22);
+}
+/* punch-hole notches on both sides at the perforation line */
+.ticket-stub::before, .ticket-stub::after {
+  content: '';
+  position: absolute;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  top: 74px;
+}
+.ticket-stub::before { left: -11px; }
+.ticket-stub::after { right: -11px; }
+
+.ticket-stub .stub-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 3px dashed rgba(28, 21, 3, 0.35); /* perforation */
+}
+.ticket-stub .stub-title { font-family: 'Anton', sans-serif; font-size: 20px; letter-spacing: 0.05em; }
+.ticket-stub .stub-sub { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.75; }
+.ticket-stub .stub-meta { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-top: 10px; }
+
+/* ---------- lotto balls ---------- */
+.game-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 0;
+}
+.game-line .gnum {
+  width: 20px;
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.ticket-stub .game-line .gnum { color: rgba(28, 21, 3, 0.6); }
+
+.ball {
+  width: 30px; height: 30px;
+  flex: none;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Anton', sans-serif;
+  font-size: 13px;
+  background: var(--ball);
+  color: #fff;
+  border: 1px solid #35406b;
+  box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.35), inset 0 2px 3px rgba(255, 255, 255, 0.12);
+}
+.ticket-stub .ball { background: #23283f; border-color: rgba(0,0,0,0.3); }
+.ball.pb {
+  background: #fff;
+  color: var(--gold-ink);
+  border: 2px solid var(--gold-deep);
+  margin-left: 8px;
+}
+.ball.matched {
+  background: linear-gradient(180deg, #47d982, var(--green-deep));
+  border-color: var(--green);
+  color: #06220f;
+  font-weight: 700;
+}
+.ball.pb.matched {
+  background: linear-gradient(180deg, #f6d989, var(--gold-deep));
+  border-color: #8a6d13;
+  color: var(--gold-ink);
+}
+.match-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  min-width: 26px;
+  text-align: right;
+  white-space: nowrap;
+}
+.ticket-stub .match-count { color: rgba(28, 21, 3, 0.65); }
+.match-count.hot { color: var(--green-deep); }
+
+@media (max-width: 374px) {
+  .ball { width: 27px; height: 27px; font-size: 12px; }
+  .ball.pb { margin-left: 4px; }
+}
+
+/* ---------- winner line callout ---------- */
+.winner-callout {
+  background: linear-gradient(160deg, rgba(233, 196, 106, 0.18), rgba(233, 196, 106, 0.05));
+  border: 1px solid var(--gold);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 12px;
+}
+.winner-callout .trophy { font-size: 26px; }
+.winner-callout .win-title { font-family: 'Anton', sans-serif; color: var(--gold); font-size: 17px; letter-spacing: 0.06em; }
+.winner-callout .win-detail { color: var(--text); font-size: 13px; margin-top: 2px; }
+
+/* ---------- status chips ---------- */
+.chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--bg-soft);
+}
+.chip.waiting { color: var(--gold); border-color: rgba(233, 196, 106, 0.5); }
+.chip.results { color: #7dc4ff; border-color: rgba(125, 196, 255, 0.5); }
+.chip.winner { color: var(--gold-ink); background: var(--gold); border-color: var(--gold-deep); }
+.chip.failed { color: var(--red); border-color: rgba(231, 111, 81, 0.5); }
+.chip.draft { color: var(--muted); }
+
+/* ---------- forms & buttons ---------- */
+input, select, textarea {
+  width: 100%;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;   /* stops iOS zoom-on-focus */
+  padding: 12px;
+  margin: 6px 0 12px;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--gold); }
+label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+
+.btn {
+  display: inline-block;
+  width: 100%;
+  background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+  color: var(--gold-ink);
+  border: none;
+  border-radius: 10px;
+  font-family: 'Anton', sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 13px;
+  cursor: pointer;
+}
+.btn:active { transform: translateY(1px); }
+.btn.secondary {
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.btn.danger { background: none; border: 1px solid var(--red); color: var(--red); }
+.btn.small { width: auto; font-size: 13px; padding: 8px 14px; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+.form-msg { font-size: 14px; margin: 8px 0; min-height: 18px; }
+.form-msg.error { color: var(--red); }
+.form-msg.ok { color: var(--green); }
+
+/* ---------- lists ---------- */
+.list-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.list-row:last-child { border-bottom: none; }
+.list-row .primary { font-weight: 600; }
+.list-row .secondary { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.amount.credit { color: var(--green); font-weight: 700; }
+.amount.owing { color: var(--red); font-weight: 700; }
+
+.mini-balls { display: flex; gap: 3px; margin-top: 6px; flex-wrap: wrap; }
+.mini-balls .ball { width: 24px; height: 24px; font-size: 11px; }
+
+/* ---------- toggle ---------- */
+.toggle { position: relative; width: 50px; height: 28px; flex: none; }
+.toggle input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+.toggle .track {
+  position: absolute; inset: 0;
+  background: var(--bg-soft); border: 1px solid var(--line);
+  border-radius: 99px; transition: background 0.15s;
+}
+.toggle .track::after {
+  content: '';
+  position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s, background 0.15s;
+}
+.toggle input:checked + .track { background: var(--green-deep); border-color: var(--green-deep); }
+.toggle input:checked + .track::after { transform: translateX(22px); background: #fff; }
+
+/* ---------- bottom nav ---------- */
+.bottom-nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: rgba(14, 18, 32, 0.96);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+  display: flex;
+  z-index: 50;
+}
+.bottom-nav a {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.bottom-nav a .icon { font-size: 20px; line-height: 1; }
+.bottom-nav a.active { color: var(--gold); }
+.bottom-nav.hidden, .hidden { display: none !important; }
+
+/* ---------- admin ---------- */
+.admin-section { margin-bottom: 22px; }
+.admin-section > h2 {
+  color: var(--gold); font-size: 16px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px; margin-bottom: 12px;
+}
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.pill-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+.tag { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 6px; background: var(--bg-soft); border: 1px solid var(--line); color: var(--muted); text-transform: uppercase; }
+.tag.off { color: var(--red); border-color: rgba(231,111,81,0.4); }
+
+/* ---------- login ---------- */
+.login-wrap { padding-top: 12vh; }
+.login-card { text-align: left; }
+.official-strip {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 10px 0 4px;
+}
+.official-strip .lbl { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; width: 100%; }

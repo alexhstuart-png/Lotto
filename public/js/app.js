@@ -1,0 +1,664 @@
+/* Work Lotto Syndicate — frontend app (vanilla JS, hash router).
+   All data comes from /api/* Netlify Functions; this file holds no secrets
+   and makes no direct Supabase/Resend calls. */
+
+(() => {
+  'use strict';
+
+  const app = document.getElementById('app');
+  const nav = document.getElementById('bottomNav');
+  const navAdmin = document.getElementById('navAdmin');
+
+  let me = null; // { id, name, email, role, notifications_enabled }
+
+  // ---------- utilities ----------
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
+  const money = (cents) => {
+    const sign = cents < 0 ? '-' : '';
+    return sign + '$' + (Math.abs(cents) / 100).toLocaleString('en-AU', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+  };
+
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso + (iso.length === 10 ? 'T12:00:00' : ''));
+    return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  async function api(path, opts = {}) {
+    const res = await fetch('/api' + path, {
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      ...opts,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    let data = {};
+    try { data = await res.json(); } catch { /* empty */ }
+    if (res.status === 401 && path !== '/login') {
+      me = null;
+      route('#/login');
+      throw new Error('Not authenticated');
+    }
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+
+  const header = () => `
+    <header class="app-header">
+      <div class="brand display">Work Lotto Syndicate</div>
+      <div class="tagline">Thursday Night Powerball</div>
+    </header>`;
+
+  // ---------- shared render pieces ----------
+
+  const STATUS_LABELS = {
+    upcoming: ['Upcoming', 'draft'],
+    waiting_results: ['Waiting for Results', 'waiting'],
+    results_pending_failed: ['Results pending — auto retrieve failed', 'failed'],
+    results_available: ['Results Available', 'results'],
+    checked: ['Checked', 'results'],
+    winner: ['Winner!', 'winner'],
+  };
+
+  const statusChip = (status) => {
+    const [label, cls] = STATUS_LABELS[status] || [status, ''];
+    return `<span class="chip ${cls}">${esc(label)}</span>`;
+  };
+
+  /** One game line: balls with green matched mains / gold matched powerball. */
+  function gameLine(game, match, { mini = false } = {}) {
+    const matched = new Set(match ? match.matchedNumbers : []);
+    const balls = game.numbers.map((n) =>
+      `<span class="ball${matched.has(n) ? ' matched' : ''}">${n}</span>`
+    ).join('');
+    const pb = `<span class="ball pb${match && match.powerballMatched ? ' matched' : ''}">${game.powerball}</span>`;
+    const count = match
+      ? `<span class="match-count${match.matchCount >= 3 || match.isWinner ? ' hot' : ''}">${match.matchCount}${match.powerballMatched ? '+PB' : ''}</span>`
+      : '';
+    return `<div class="game-line${mini ? ' mini' : ''}">
+      <span class="gnum">G${game.game_index}</span>${balls}${pb}${count}
+    </div>`;
+  }
+
+  function officialStrip(result) {
+    if (!result) return '';
+    const balls = result.numbers.map((n) => `<span class="ball">${n}</span>`).join('');
+    return `<div class="official-strip">
+      <span class="lbl">Official numbers${result.source === 'manual' ? ' (entered by admin)' : ''}</span>
+      ${balls}<span class="ball pb">${result.powerball}</span>
+    </div>`;
+  }
+
+  function winnerCallouts(detail) {
+    if (!detail || !detail.matching || !detail.matching.hasWinner) return '';
+    return detail.matching.winners.map((w) => {
+      const confirmed = (detail.winnings || []).find((x) => x.game_index === w.gameIndex);
+      const detailTxt = confirmed
+        ? `${money(confirmed.amount_cents)}${confirmed.added_to_kitty ? ' — added to kitty' : ''}`
+        : 'Prize amount to be confirmed by admin';
+      return `<div class="winner-callout">
+        <span class="trophy">🏆</span>
+        <div>
+          <div class="win-title">Winner — Game ${w.gameIndex}${w.division ? ` · Division ${w.division}` : ''}</div>
+          <div class="win-detail">${w.matchCount} numbers${w.powerballMatched ? ' + Powerball' : ''} · ${esc(detailTxt)}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  /** The gold perforated ticket stub with all games. */
+  function ticketStub(detail) {
+    if (!detail || !detail.ticket) {
+      return `<div class="card"><h2>This week's ticket</h2>
+        <p style="color:var(--muted)">No ticket yet — check back once it's published.</p></div>`;
+    }
+    const matchById = new Map();
+    if (detail.matching) for (const m of detail.matching.matches) matchById.set(m.gameIndex, m);
+    const lines = detail.games.map((g) => gameLine(g, matchById.get(g.game_index) || null)).join('');
+    return `
+      ${winnerCallouts(detail)}
+      <div class="ticket-stub">
+        <div class="stub-head">
+          <div>
+            <div class="stub-title">Powerball</div>
+            <div class="stub-sub">${esc(fmtDate(detail.draw.draw_date))}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="stub-sub">${detail.games.length} games</div>
+            <div class="stub-sub">${money(detail.ticket.cost_cents)}</div>
+          </div>
+        </div>
+        ${lines}
+        <div class="stub-meta">
+          <span>${detail.draw.draw_number ? 'Draw #' + detail.draw.draw_number : 'Syndicate entry'}</span>
+          <span>Good luck!</span>
+        </div>
+      </div>`;
+  }
+
+  // ---------- router ----------
+
+  const views = {};
+
+  function route(hash) {
+    if (hash) location.hash = hash;
+  }
+
+  async function render() {
+    const hash = location.hash || '#/home';
+    const name = hash.replace('#/', '').split('?')[0] || 'home';
+
+    if (!me && name !== 'login') {
+      try {
+        const data = await api('/me');
+        me = data.member;
+      } catch {
+        return; // api() already routed to #/login
+      }
+    }
+    if (name === 'admin' && (!me || me.role !== 'admin')) return route('#/home');
+
+    nav.classList.toggle('hidden', name === 'login');
+    navAdmin.classList.toggle('hidden', !me || me.role !== 'admin');
+    nav.querySelectorAll('a').forEach((a) =>
+      a.classList.toggle('active', a.dataset.view === name)
+    );
+
+    const view = views[name] || views.home;
+    app.innerHTML = header() + `<p style="color:var(--muted);text-align:center">Loading…</p>`;
+    try {
+      await view();
+    } catch (e) {
+      if (e.message !== 'Not authenticated') {
+        app.innerHTML = header() + `<div class="card"><p class="form-msg error">${esc(e.message)}</p></div>`;
+      }
+    }
+    window.scrollTo(0, 0);
+  }
+
+  window.addEventListener('hashchange', render);
+
+  // ---------- views ----------
+
+  views.login = async () => {
+    me = null;
+    app.innerHTML = `
+      <div class="login-wrap">
+        ${header()}
+        <div class="card login-card">
+          <label>Email</label>
+          <input id="loginEmail" type="email" autocomplete="email" inputmode="email" placeholder="you@work.com">
+          <label>Password</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Syndicate password">
+          <div class="form-msg error" id="loginMsg"></div>
+          <button class="btn" id="loginBtn">Log In</button>
+        </div>
+      </div>`;
+    const submit = async () => {
+      const btn = document.getElementById('loginBtn');
+      const msg = document.getElementById('loginMsg');
+      btn.disabled = true; msg.textContent = '';
+      try {
+        const data = await api('/login', {
+          method: 'POST',
+          body: {
+            email: document.getElementById('loginEmail').value.trim(),
+            password: document.getElementById('loginPassword').value,
+          },
+        });
+        me = data.member;
+        route('#/home');
+      } catch (e) {
+        msg.textContent = e.message;
+        btn.disabled = false;
+      }
+    };
+    document.getElementById('loginBtn').addEventListener('click', submit);
+    app.querySelectorAll('input').forEach((i) =>
+      i.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); })
+    );
+  };
+
+  views.home = async () => {
+    const data = await api('/home');
+    const d = data.current;
+    const balCls = data.balance_cents < 0 ? 'owing' : 'credit';
+    app.innerHTML = header() + `
+      <div class="stat-row">
+        <div class="stat">
+          <div class="label">Kitty</div>
+          <div class="value">${money(data.kitty_cents)}</div>
+        </div>
+        <div class="stat">
+          <div class="label">My balance</div>
+          <div class="value ${balCls}">${money(data.balance_cents)}</div>
+        </div>
+      </div>
+      ${data.balance_cents < 0 ? `<div class="card" style="border-color:rgba(231,111,81,0.5)">
+        <p style="margin:0;color:var(--red);font-weight:600">You're ${money(-data.balance_cents)} behind — top up to stay in the draw. Weekly charge is ${money(data.weekly_charge_cents)}.</p>
+      </div>` : ''}
+      ${d ? `
+        <div class="card">
+          <h2>This week <span style="float:right">${statusChip(d.draw.status)}</span></h2>
+          ${officialStrip(d.result)}
+        </div>
+        ${ticketStub(d)}
+      ` : `<div class="card"><p style="color:var(--muted)">No draws yet.</p></div>`}
+      <div class="stat">
+        <div class="label">Total syndicate winnings</div>
+        <div class="value">${money(data.total_winnings_cents)}</div>
+      </div>`;
+  };
+
+  views.ticket = async () => {
+    const data = await api('/home');
+    const d = data.current;
+    if (!d) {
+      app.innerHTML = header() + `<div class="card"><p style="color:var(--muted)">No draws yet.</p></div>`;
+      return;
+    }
+    app.innerHTML = header() + `
+      <div class="card">
+        <h2>${esc(fmtDate(d.draw.draw_date))} <span style="float:right">${statusChip(d.draw.status)}</span></h2>
+        ${d.result ? officialStrip(d.result) : '<p style="color:var(--muted);margin:0">Results land Friday morning — numbers will light up automatically.</p>'}
+      </div>
+      ${ticketStub(d)}
+      ${d.ticket && d.ticket.published_at ? `<p style="color:var(--muted);font-size:12px;text-align:center">Published ${new Date(d.ticket.published_at).toLocaleString('en-AU')}</p>` : ''}`;
+  };
+
+  views.history = async () => {
+    const data = await api('/history');
+    const rows = data.draws.map((d) => {
+      const result = d.result
+        ? `<div class="mini-balls">${d.result.numbers.map((n) => `<span class="ball">${n}</span>`).join('')}<span class="ball pb">${d.result.powerball}</span></div>`
+        : '';
+      const winnings = (d.winnings || []).reduce((s, w) => s + w.amount_cents, 0);
+      const bestMatch = d.matching
+        ? Math.max(0, ...d.matching.matches.map((m) => m.matchCount))
+        : null;
+      return `<div class="card">
+        <div class="list-row" style="border:none;padding:0">
+          <div>
+            <div class="primary">${esc(fmtDate(d.draw.draw_date))}</div>
+            <div class="secondary">
+              ${d.ticket ? `${d.games.length} games · ${money(d.ticket.cost_cents)}` : 'No ticket'}
+              ${bestMatch !== null ? ` · best line ${bestMatch}` : ''}
+              ${winnings > 0 ? ` · won ${money(winnings)}` : ''}
+            </div>
+          </div>
+          ${statusChip(d.draw.status)}
+        </div>
+        ${result}
+        ${winnerCallouts(d)}
+      </div>`;
+    }).join('');
+    app.innerHTML = header() + (rows || `<div class="card"><p style="color:var(--muted)">No draw history yet.</p></div>`);
+  };
+
+  views.account = async () => {
+    const data = await api('/account');
+    const balCls = data.balance_cents < 0 ? 'owing' : 'credit';
+    const txns = data.transactions.map((t) => {
+      const labels = {
+        weekly_charge: 'Weekly ticket charge',
+        payment: 'Payment',
+        adjustment: 'Adjustment',
+        winnings_credit: 'Winnings credit',
+      };
+      return `<div class="list-row">
+        <div>
+          <div class="primary">${esc(labels[t.type] || t.type)}</div>
+          <div class="secondary">${esc(t.note || '')} · ${new Date(t.created_at).toLocaleDateString('en-AU')}</div>
+        </div>
+        <span class="amount ${t.amount_cents < 0 ? 'owing' : 'credit'}">${money(t.amount_cents)}</span>
+      </div>`;
+    }).join('');
+    app.innerHTML = header() + `
+      <div class="stat">
+        <div class="label">My balance</div>
+        <div class="value ${balCls}">${money(data.balance_cents)}</div>
+      </div>
+      <div class="card">
+        <div class="list-row" style="border:none;padding:0">
+          <div>
+            <div class="primary">${esc(data.member.name)}</div>
+            <div class="secondary">${esc(data.member.email)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="list-row" style="border:none;padding:0">
+          <div>
+            <div class="primary">Email notifications</div>
+            <div class="secondary">Ticket confirmations, reminders, win announcements</div>
+          </div>
+          <span class="toggle">
+            <input type="checkbox" id="notifToggle" ${data.member.notifications_enabled ? 'checked' : ''}>
+            <span class="track"></span>
+          </span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Transactions</h2>
+        ${txns || '<p style="color:var(--muted)">No transactions yet.</p>'}
+      </div>
+      <button class="btn secondary" id="logoutBtn">Log out</button>`;
+    document.getElementById('notifToggle').addEventListener('change', async (e) => {
+      try {
+        await api('/account/notifications', { method: 'POST', body: { enabled: e.target.checked } });
+      } catch { e.target.checked = !e.target.checked; }
+    });
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await api('/logout', { method: 'POST' });
+      me = null;
+      route('#/login');
+    });
+  };
+
+  // ---------- admin ----------
+
+  function parseGameLine(line) {
+    const nums = line.trim().split(/[\s,:+]+/).filter(Boolean).map(Number);
+    if (nums.length !== 8 || nums.some((n) => !Number.isInteger(n))) return null;
+    return { numbers: nums.slice(0, 7), powerball: nums[7] };
+  }
+
+  views.admin = async () => {
+    const data = await api('/admin/overview');
+    const draws = data.draws;
+    const activeDraw = draws[0] || null;
+
+    const memberRows = data.members.map((m) => `
+      <div class="list-row">
+        <div>
+          <div class="primary">${esc(m.name)} ${m.role === 'admin' ? '<span class="tag">admin</span>' : ''}
+            ${!m.is_active ? '<span class="tag off">inactive</span>' : ''}
+            ${!m.notifications_enabled ? '<span class="tag off">no emails</span>' : ''}</div>
+          <div class="secondary">${esc(m.email)}</div>
+        </div>
+        <div style="text-align:right">
+          <span class="amount ${m.balance_cents < 0 ? 'owing' : 'credit'}">${money(m.balance_cents)}</span><br>
+          <button class="btn small secondary" data-edit-member="${m.id}" style="margin-top:6px">Edit</button>
+        </div>
+      </div>`).join('');
+
+    const drawOptions = draws.map((d) =>
+      `<option value="${d.draw.id}">${esc(d.draw.draw_date)} — ${esc((STATUS_LABELS[d.draw.status] || [d.draw.status])[0])}</option>`
+    ).join('');
+
+    const memberOptions = data.members.filter((m) => m.is_active)
+      .map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+
+    const currentGamesText = activeDraw && activeDraw.games.length
+      ? activeDraw.games.map((g) => g.numbers.join(' ') + ' ' + g.powerball).join('\n') : '';
+
+    const emailRows = data.email_logs.map((l) => `
+      <div class="list-row">
+        <div>
+          <div class="primary">${esc(l.type)} ${l.status === 'failed' ? '<span class="tag off">failed</span>' : ''}</div>
+          <div class="secondary">${esc(l.to_email)} · ${new Date(l.sent_at).toLocaleString('en-AU')}</div>
+        </div>
+      </div>`).join('');
+
+    const kittyRows = data.kitty_transactions.map((t) => `
+      <div class="list-row">
+        <div>
+          <div class="primary">${esc(t.type.replace('_', ' '))}</div>
+          <div class="secondary">${esc(t.note || '')} · ${new Date(t.created_at).toLocaleDateString('en-AU')}</div>
+        </div>
+        <span class="amount ${t.amount_cents < 0 ? 'owing' : 'credit'}">${money(t.amount_cents)}</span>
+      </div>`).join('');
+
+    app.innerHTML = header() + `
+      <div class="stat"><div class="label">Kitty</div><div class="value">${money(data.kitty_cents)}</div></div>
+
+      <div class="admin-section">
+        <h2>Members</h2>
+        <div class="card">${memberRows}</div>
+        <div class="card">
+          <h2>Add member</h2>
+          <label>Name</label><input id="nmName">
+          <label>Email</label><input id="nmEmail" type="email">
+          <div class="form-msg" id="nmMsg"></div>
+          <button class="btn secondary" id="nmBtn">Add member</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h2>Draw &amp; Ticket</h2>
+        <div class="card">
+          <label>New draw date (a Thursday)</label>
+          <input id="ndDate" type="date">
+          <div class="form-msg" id="ndMsg"></div>
+          <button class="btn secondary" id="ndBtn">Create draw</button>
+        </div>
+        <div class="card">
+          <label>Draw</label>
+          <select id="ticketDraw">${drawOptions}</select>
+          <label>Games — one per line: 7 mains then the Powerball (e.g. <code>4 11 17 22 31 40 2 7</code>)</label>
+          <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
+          <label>Ticket cost ($)</label>
+          <input id="ticketCost" type="number" step="0.01" min="0" value="${activeDraw && activeDraw.ticket ? (activeDraw.ticket.cost_cents / 100).toFixed(2) : ''}">
+          <div class="form-msg" id="ticketMsg"></div>
+          <div class="pill-btns">
+            <button class="btn small secondary" id="saveTicketBtn">Save ticket</button>
+            <button class="btn small" id="publishTicketBtn">Publish (charge + email)</button>
+          </div>
+          <p style="color:var(--muted);font-size:12px">Publishing charges each active member ${money(data.settings.weekly_charge_cents)} once — re-publishing never double-charges.</p>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h2>Enter Official Results</h2>
+        <div class="card">
+          <label>Draw</label>
+          <select id="resultsDraw">${drawOptions}</select>
+          <label>7 winning mains + Powerball (space-separated, PB last)</label>
+          <input id="resultsNumbers" placeholder="4 8 17 22 31 33 44 7">
+          <div class="form-msg" id="resultsMsg"></div>
+          <button class="btn" id="resultsBtn">Save results — matching runs automatically</button>
+          <p style="color:var(--muted);font-size:12px">Saving triggers matching, highlighting, win detection and draw status in one action. Manual entry overrides scraped results.</p>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h2>Payments</h2>
+        <div class="card">
+          <label>Member</label><select id="payMember">${memberOptions}</select>
+          <label>Amount ($)</label><input id="payAmount" type="number" step="0.01" min="0">
+          <label>Note</label><input id="payNote" placeholder="Bank transfer">
+          <div class="form-msg" id="payMsg"></div>
+          <button class="btn secondary" id="payBtn">Record payment (credits member + kitty)</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h2>Confirm Winnings</h2>
+        <div class="card">
+          <label>Draw</label><select id="winDraw">${drawOptions}</select>
+          <div class="grid-2">
+            <div><label>Division (1-9, optional)</label><input id="winDivision" type="number" min="1" max="9"></div>
+            <div><label>Game # (optional)</label><input id="winGame" type="number" min="1"></div>
+          </div>
+          <label>Amount ($)</label><input id="winAmount" type="number" step="0.01" min="0">
+          <div class="list-row" style="border:none">
+            <span>Add to kitty</span>
+            <span class="toggle"><input type="checkbox" id="winToKitty" checked><span class="track"></span></span>
+          </div>
+          <div class="form-msg" id="winMsg"></div>
+          <div class="pill-btns">
+            <button class="btn small" id="winBtn">Confirm winnings</button>
+            <button class="btn small secondary" id="announceBtn" disabled>Announce win to members</button>
+          </div>
+          <p style="color:var(--muted);font-size:12px">Prize amounts are never guessed — enter the amount from the official ticket check.</p>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h2>Settings</h2>
+        <div class="card">
+          <label>Weekly charge ($)</label>
+          <input id="setWeekly" type="number" step="0.01" min="0" value="${(data.settings.weekly_charge_cents / 100).toFixed(2)}">
+          <div class="list-row" style="border:none">
+            <span>Charge members on publish</span>
+            <span class="toggle"><input type="checkbox" id="setCharge" ${data.settings.charge_on_publish ? 'checked' : ''}><span class="track"></span></span>
+          </div>
+          <label>Reminder threshold ($ — remind when balance below this)</label>
+          <input id="setThreshold" type="number" step="0.01" value="${(data.settings.owing_threshold_cents / 100).toFixed(2)}">
+          <div class="form-msg" id="setMsg"></div>
+          <div class="pill-btns">
+            <button class="btn small secondary" id="setBtn">Save settings</button>
+            <button class="btn small secondary" id="remindersBtn">Run Friday reminders now</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h2>Kitty ledger</h2>
+        <div class="card">${kittyRows || '<p style="color:var(--muted)">Empty.</p>'}</div>
+      </div>
+
+      <div class="admin-section">
+        <h2>Email log</h2>
+        <div class="card">${emailRows || '<p style="color:var(--muted)">No emails sent yet.</p>'}</div>
+      </div>`;
+
+    // ----- wire up admin actions -----
+    const on = (id, fn) => document.getElementById(id).addEventListener('click', fn);
+    const val = (id) => document.getElementById(id).value;
+    const msg = (id, text, ok) => {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = 'form-msg ' + (ok ? 'ok' : 'error');
+    };
+    const dollars = (id) => Math.round(parseFloat(val(id) || '0') * 100);
+    const act = async (msgId, fn, okText, { rerender = true } = {}) => {
+      try {
+        const out = await fn();
+        msg(msgId, okText(out), true);
+        if (rerender) setTimeout(render, 1200);
+      } catch (e) { msg(msgId, e.message, false); }
+    };
+
+    // Ticket editor follows the selected draw.
+    document.getElementById('ticketDraw').addEventListener('change', (e) => {
+      const d = draws.find((x) => x.draw.id === e.target.value);
+      document.getElementById('ticketGames').value = d && d.games.length
+        ? d.games.map((g) => g.numbers.join(' ') + ' ' + g.powerball).join('\n') : '';
+      document.getElementById('ticketCost').value = d && d.ticket
+        ? (d.ticket.cost_cents / 100).toFixed(2) : '';
+    });
+
+    on('nmBtn', () => act('nmMsg',
+      () => api('/admin/members', { method: 'POST', body: { name: val('nmName'), email: val('nmEmail') } }),
+      () => 'Member added'));
+
+    app.querySelectorAll('[data-edit-member]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const m = data.members.find((x) => x.id === btn.dataset.editMember);
+        const name = prompt('Name', m.name);
+        if (name === null) return;
+        const active = confirm(`OK = ${m.name} is ACTIVE (charged weekly + emailed)\nCancel = inactive`);
+        try {
+          await api(`/admin/members/${m.id}`, { method: 'PATCH', body: { name, is_active: active } });
+          render();
+        } catch (e) { alert(e.message); }
+      });
+    });
+
+    on('ndBtn', () => act('ndMsg',
+      () => api('/admin/draws', { method: 'POST', body: { draw_date: val('ndDate') } }),
+      () => 'Draw created'));
+
+    const collectGames = () => {
+      const lines = val('ticketGames').split('\n').map((l) => l.trim()).filter(Boolean);
+      const games = lines.map(parseGameLine);
+      if (games.length === 0 || games.some((g) => g === null)) {
+        throw new Error('Each line needs exactly 8 numbers: 7 mains (1-35) then the Powerball (1-20)');
+      }
+      return games;
+    };
+
+    on('saveTicketBtn', () => act('ticketMsg',
+      () => api('/admin/tickets', {
+        method: 'POST',
+        body: { draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games: collectGames() },
+      }),
+      (o) => `Saved ${o.games_saved} games${o.edited_published ? ' (published ticket edit — audit logged)' : ''}`));
+
+    on('publishTicketBtn', () => act('ticketMsg',
+      async () => {
+        const saved = await api('/admin/tickets', {
+          method: 'POST',
+          body: { draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games: collectGames() },
+        });
+        return api(`/admin/tickets/${saved.ticket_id}/publish`, { method: 'POST' });
+      },
+      (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, emailed ${o.emailed}`));
+
+    on('resultsBtn', () => act('resultsMsg',
+      () => {
+        const parsed = parseGameLine(val('resultsNumbers'));
+        if (!parsed) throw new Error('Enter exactly 8 numbers: 7 mains then the Powerball');
+        return api('/admin/results', {
+          method: 'POST',
+          body: { draw_id: val('resultsDraw'), numbers: parsed.numbers, powerball: parsed.powerball },
+        });
+      },
+      (o) => o.hasWinner ? '🏆 WINNER detected — matching done' : 'Results saved — matching done, no winning line'));
+
+    on('payBtn', () => act('payMsg',
+      () => api('/admin/payments', {
+        method: 'POST',
+        body: { member_id: val('payMember'), amount_cents: dollars('payAmount'), note: val('payNote') },
+      }),
+      () => 'Payment recorded'));
+
+    let lastWinningId = null;
+    on('winBtn', () => act('winMsg',
+      async () => {
+        const out = await api('/admin/winnings', {
+          method: 'POST',
+          body: {
+            draw_id: val('winDraw'),
+            division: val('winDivision') ? parseInt(val('winDivision'), 10) : null,
+            game_index: val('winGame') ? parseInt(val('winGame'), 10) : null,
+            amount_cents: dollars('winAmount'),
+            add_to_kitty: document.getElementById('winToKitty').checked,
+          },
+        });
+        lastWinningId = out.winning.id;
+        document.getElementById('announceBtn').disabled = false;
+        return out;
+      },
+      (o) => `Winnings confirmed (${money(o.winning.amount_cents)}) — you can announce it below`,
+      { rerender: false }));
+
+    on('announceBtn', () => act('winMsg',
+      () => api('/admin/winnings/announce', { method: 'POST', body: { winning_id: lastWinningId } }),
+      (o) => `Announced to ${o.emailed} member(s)`));
+
+    on('setBtn', () => act('setMsg',
+      () => api('/admin/settings', {
+        method: 'PATCH',
+        body: {
+          weekly_charge_cents: dollars('setWeekly'),
+          charge_on_publish: document.getElementById('setCharge').checked,
+          owing_threshold_cents: dollars('setThreshold'),
+        },
+      }),
+      () => 'Settings saved'));
+
+    on('remindersBtn', () => act('setMsg',
+      () => api('/admin/reminders/run', { method: 'POST' }),
+      (o) => `Reminders: ${o.eligible} eligible, ${o.sent} sent (already-reminded members skipped)`));
+  };
+
+  // ---------- boot ----------
+  render();
+})();

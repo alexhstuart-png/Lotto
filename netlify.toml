@@ -1,0 +1,24 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Scheduled functions — Netlify cron runs in UTC.
+# Australia/Perth is UTC+8 year-round (no daylight saving), so:
+#   Friday 08:00 Perth  = Friday   00:00 UTC  ->  "0 0 * * 5"   (payment reminders)
+#   Friday 03:00 Perth  = Thursday 19:00 UTC  ->  "0 19 * * 4"  (Powerball results scrape)
+[functions."reminders-cron"]
+  schedule = "0 0 * * 5"
+
+[functions."results-cron"]
+  schedule = "0 19 * * 4"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "same-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"

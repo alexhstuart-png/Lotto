@@ -798,12 +798,8 @@
     };
 
     on('nmBtn', () => act('nmMsg',
-      async () => {
-        const out = await api('/admin/members', { method: 'POST', body: { name: val('nmName'), email: val('nmEmail') } });
-        showInvite(out);
-        return out;
-      },
-      (o) => o.invite_email_sent ? 'Member added — invite email sent' : 'Member added — invite link shown above'));
+      () => api('/admin/members', { method: 'POST', body: { name: val('nmName'), email: val('nmEmail') } }),
+      (o) => `Member added — they can log in now with password "${o.default_password}"`));
 
     app.querySelectorAll('[data-invite-member]').forEach((btn) => {
       btn.addEventListener('click', async () => {

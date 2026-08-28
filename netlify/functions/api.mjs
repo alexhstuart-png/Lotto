@@ -27,6 +27,10 @@ import { createInviteToken, verifyInviteToken, validatePassword } from '../../li
 
 export const config = { path: '/api/*' };
 
+// Password every newly added member starts with (they log in immediately;
+// the admin's "Reset link" button lets them choose their own afterwards).
+const DEFAULT_MEMBER_PASSWORD = 'lotto2026';
+
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
     status,
@@ -268,13 +272,14 @@ async function adminCreateMember(session, req) {
   const name = validateName(body.name);
   const email = validateEmail(body.email);
   if (!name || !email) return err('Valid name and email required');
+  // New members start with the shared default password and can log in
+  // immediately; the admin's "Reset link" button lets anyone set their own.
+  const defaultHash = await bcrypt.hash(DEFAULT_MEMBER_PASSWORD, 10);
   const { data, error } = await supabase().from(T('members'))
-    .insert({ name, email, role: 'member' }).select().single();
+    .insert({ name, email, role: 'member', password_hash: defaultHash }).select().single();
   if (error) return err(error.code === '23505' ? 'A member with that email already exists' : 'Could not create member');
   await auditLog({ actorId: session.memberId, action: 'member_created', entity: 'members', entityId: data.id, details: { name, email } });
-  // New members set their own password via an emailed link.
-  const invite = await sendInvite(data);
-  return json({ member: publicMember(data), invite_link: invite.link, invite_email_sent: invite.sent }, 201);
+  return json({ member: publicMember(data), default_password: DEFAULT_MEMBER_PASSWORD }, 201);
 }
 
 /** Admin: (re)send a set-password link — works as invite and as reset. */

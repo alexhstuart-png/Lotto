@@ -91,10 +91,11 @@ Safety properties of both jobs (safe to trigger manually to test):
 
 ## 6. Accounts and passwords
 
-- Every member has their **own password**. When the admin adds a member, the
-  app emails them a single-use set-password link (valid 7 days); the same
-  "Reset link" button on the Admin screen re-sends it as a password reset.
-  If email isn't configured yet, the link is shown to the admin to pass on.
+- Every member has their **own password**. Newly added members start with
+  the default password (`lotto2026`, set in `netlify/functions/api.mjs`) so
+  they can log in immediately. The Admin screen's "Reset link" button emails
+  (or shows) a single-use set-password link — valid 7 days — for anyone who
+  wants their own password or forgets theirs.
 - There is deliberately no open signup. To force-set a password with SQL:
   `update members set password_hash = crypt('new-password', gen_salt('bf', 10)) where email = '...';`
   (or hash locally with `node scripts/hash-password.mjs`).

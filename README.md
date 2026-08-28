@@ -29,6 +29,9 @@ conversions and demo-data removal.
 5. Prize amounts are never guessed; the admin confirms winnings explicitly.
 6. All secrets live in Netlify env vars; the browser only ever talks to
    `/api/*`; admin role is verified server-side on every request.
+7. Per-member passwords: adding a member emails them a single-use
+   set-password link (7-day expiry); the admin can re-send it any time as a
+   password reset. No open signup.
 
 ## Development
 

@@ -26,8 +26,5 @@ delete from draws where is_demo;
 
 delete from members where is_demo;
 
--- Note: the settings row (and its passwords) stays. If it was created by the
--- seed with demo passwords, rotate them:
---   update settings set member_password_hash = crypt('new-password', gen_salt('bf', 10)),
---                       admin_password_hash  = crypt('new-admin-password', gen_salt('bf', 10))
---   where id = 1;
+-- Note: the settings row stays (weekly charge etc.). Passwords are per-member
+-- and demo members are deleted above, so nothing needs rotating.

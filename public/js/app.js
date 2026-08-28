@@ -348,7 +348,8 @@
     const hash = location.hash || '#/home';
     const name = hash.replace('#/', '').split('?')[0] || 'home';
 
-    if (!me && name !== 'login') {
+    const publicViews = ['login', 'set-password'];
+    if (!me && !publicViews.includes(name)) {
       try {
         const data = await api('/me');
         me = data.member;
@@ -358,7 +359,7 @@
     }
     if (name === 'admin' && (!me || me.role !== 'admin')) return route('#/home');
 
-    nav.classList.toggle('hidden', name === 'login');
+    nav.classList.toggle('hidden', publicViews.includes(name));
     navAdmin.classList.toggle('hidden', !me || me.role !== 'admin');
     nav.querySelectorAll('a').forEach((a) =>
       a.classList.toggle('active', a.dataset.view === name)
@@ -419,6 +420,41 @@
     app.querySelectorAll('input').forEach((i) =>
       i.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); })
     );
+  };
+
+  views['set-password'] = async () => {
+    const query = new URLSearchParams((location.hash.split('?')[1] || ''));
+    const email = query.get('email') || '';
+    const token = query.get('token') || '';
+    app.innerHTML = `
+      <div class="login-wrap">
+        ${header()}
+        <div class="card login-card">
+          <h2>Set your password</h2>
+          <p style="color:var(--muted);font-size:14px">for <strong>${esc(email)}</strong></p>
+          <label>New password (8+ characters)</label>
+          <input id="spPass" type="password" autocomplete="new-password">
+          <label>Confirm password</label>
+          <input id="spPass2" type="password" autocomplete="new-password">
+          <div class="form-msg error" id="spMsg"></div>
+          <button class="btn" id="spBtn">Save password</button>
+        </div>
+      </div>`;
+    document.getElementById('spBtn').addEventListener('click', async () => {
+      const msg = document.getElementById('spMsg');
+      const p1 = document.getElementById('spPass').value;
+      const p2 = document.getElementById('spPass2').value;
+      msg.textContent = '';
+      if (p1.length < 8) { msg.textContent = 'Password must be at least 8 characters'; return; }
+      if (p1 !== p2) { msg.textContent = "Passwords don't match"; return; }
+      try {
+        await api('/set-password', { method: 'POST', body: { email, token, password: p1 } });
+        app.querySelector('.login-card').innerHTML = `
+          <h2>Password set 🎉</h2>
+          <p style="color:var(--muted)">You're all set — log in with your email and new password.</p>
+          <button class="btn" onclick="location.hash='#/login'">Go to login</button>`;
+      } catch (e) { msg.textContent = e.message; }
+    });
   };
 
   views.home = async () => {
@@ -576,12 +612,14 @@
         <div>
           <div class="primary">${esc(m.name)} ${m.role === 'admin' ? '<span class="tag">admin</span>' : ''}
             ${!m.is_active ? '<span class="tag off">inactive</span>' : ''}
-            ${!m.notifications_enabled ? '<span class="tag off">no emails</span>' : ''}</div>
+            ${!m.notifications_enabled ? '<span class="tag off">no emails</span>' : ''}
+            ${!m.has_password ? '<span class="tag off">no password yet</span>' : ''}</div>
           <div class="secondary">${esc(m.email)}</div>
         </div>
         <div style="text-align:right">
           <span class="amount ${m.balance_cents < 0 ? 'owing' : 'credit'}">${money(m.balance_cents)}</span><br>
           <button class="btn small secondary" data-edit-member="${m.id}" style="margin-top:6px">Edit</button>
+          <button class="btn small secondary" data-invite-member="${m.id}" style="margin-top:6px">${m.has_password ? 'Reset link' : 'Resend invite'}</button>
         </div>
       </div>`).join('');
 
@@ -752,9 +790,31 @@
         ? (d.ticket.cost_cents / 100).toFixed(2) : '';
     });
 
+    const showInvite = (out) => {
+      const status = out.invite_email_sent
+        ? 'Invite email sent — here is the set-password link too:'
+        : 'Email delivery is not configured — copy this set-password link and send it to them:';
+      prompt(status, out.invite_link);
+    };
+
     on('nmBtn', () => act('nmMsg',
-      () => api('/admin/members', { method: 'POST', body: { name: val('nmName'), email: val('nmEmail') } }),
-      () => 'Member added'));
+      async () => {
+        const out = await api('/admin/members', { method: 'POST', body: { name: val('nmName'), email: val('nmEmail') } });
+        showInvite(out);
+        return out;
+      },
+      (o) => o.invite_email_sent ? 'Member added — invite email sent' : 'Member added — invite link shown above'));
+
+    app.querySelectorAll('[data-invite-member]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const out = await api(`/admin/members/${btn.dataset.inviteMember}/invite`, { method: 'POST' });
+          showInvite(out);
+        } catch (e) { alert(e.message); }
+        btn.disabled = false;
+      });
+    });
 
     app.querySelectorAll('[data-edit-member]').forEach((btn) => {
       btn.addEventListener('click', async () => {

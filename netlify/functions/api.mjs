@@ -20,9 +20,10 @@ import {
 import { matchTicket } from '../../lib/matching.mjs';
 import { chargeMembersForDraw } from '../../lib/ledger.mjs';
 import { saveResultsAndProcess } from '../../lib/results-pipeline.mjs';
-import { sendEmail, ticketPublishedEmail, announceWinEmail } from '../../lib/email.mjs';
+import { sendEmail, ticketPublishedEmail, announceWinEmail, inviteEmail } from '../../lib/email.mjs';
 import { selectBroadcastAudience } from '../../lib/audience.mjs';
 import { runReminders } from '../../lib/reminders-runner.mjs';
+import { createInviteToken, verifyInviteToken, validatePassword } from '../../lib/invites.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -40,6 +41,13 @@ async function readBody(req) {
 // ---------------------------------------------------------------------------
 // Shared read helpers
 // ---------------------------------------------------------------------------
+
+/** Strip credential fields before a member row leaves the server. */
+function publicMember(m) {
+  if (!m) return m;
+  const { password_hash, reset_token_hash, reset_token_expires, ...rest } = m;
+  return { ...rest, has_password: !!password_hash, invite_pending: !!reset_token_hash };
+}
 
 /** Full detail for one draw: ticket, games, results, live matching. */
 async function drawDetail(draw) {
@@ -93,13 +101,12 @@ async function handleLogin(req) {
   const member = must(
     await supabase().from(T('members')).select('*').eq('email', cleanEmail).maybeSingle()
   );
-  // Constant-shaped failure: same message whether email or password was wrong.
+  // Constant-shaped failure: same message whether the email is unknown, the
+  // member is inactive, they haven't set a password yet, or it's wrong.
   const fail = () => err('Invalid email or password', 401);
-  if (!member || !member.is_active) return fail();
+  if (!member || !member.is_active || !member.password_hash) return fail();
 
-  const settings = await getSettings();
-  const hash = member.role === 'admin' ? settings.admin_password_hash : settings.member_password_hash;
-  const ok = await bcrypt.compare(password, hash);
+  const ok = await bcrypt.compare(password, member.password_hash);
   if (!ok) return fail();
 
   const token = signSession({ memberId: member.id, role: member.role });
@@ -108,6 +115,47 @@ async function handleLogin(req) {
     200,
     { 'Set-Cookie': sessionCookie(token) }
   );
+}
+
+/** Public: set a password from an emailed invite/reset link. Single-use. */
+async function handleSetPassword(req) {
+  const { email, token, password } = await readBody(req);
+  const cleanEmail = validateEmail(email);
+  if (!cleanEmail) return err('Invalid link', 400);
+  if (!validatePassword(password)) return err('Password must be 8-100 characters', 400);
+  const member = must(
+    await supabase().from(T('members')).select('*').eq('email', cleanEmail).maybeSingle()
+  );
+  if (!member || !member.is_active || !verifyInviteToken(member, token)) {
+    return err('This link is invalid or has expired — ask the admin to send a new one', 400);
+  }
+  const hash = await bcrypt.hash(password, 10);
+  must(
+    await supabase().from(T('members'))
+      .update({ password_hash: hash, reset_token_hash: null, reset_token_expires: null })
+      .eq('id', member.id).select().single()
+  );
+  await auditLog({ actorId: member.id, action: 'password_set', entity: 'members', entityId: member.id });
+  return json({ ok: true });
+}
+
+/**
+ * Generate a fresh set-password token for a member, store its hash, and email
+ * the link. Returns the link too so the admin can pass it on manually if
+ * email delivery isn't configured yet.
+ */
+async function sendInvite(member, { isReset = false } = {}) {
+  const { token, tokenHash, expires } = createInviteToken();
+  must(
+    await supabase().from(T('members'))
+      .update({ reset_token_hash: tokenHash, reset_token_expires: expires })
+      .eq('id', member.id).select().single()
+  );
+  const base = (process.env.SITE_URL || process.env.URL || '').replace(/\/$/, '');
+  const link = `${base}/#/set-password?email=${encodeURIComponent(member.email)}&token=${token}`;
+  const tpl = inviteEmail({ memberName: member.name, link, isReset });
+  const { sent } = await sendEmail({ ...tpl, to: member.email, type: 'invite', memberId: member.id });
+  return { link, sent };
 }
 
 async function handleMe(session) {
@@ -202,7 +250,7 @@ async function adminOverview() {
       .order('created_at', { ascending: false }).limit(50)
   );
   return json({
-    members: members.map((m) => ({ ...m, balance_cents: balances.get(m.id) ?? 0 })),
+    members: members.map((m) => ({ ...publicMember(m), balance_cents: balances.get(m.id) ?? 0 })),
     kitty_cents: kitty,
     settings: {
       weekly_charge_cents: settings.weekly_charge_cents,
@@ -224,7 +272,21 @@ async function adminCreateMember(session, req) {
     .insert({ name, email, role: 'member' }).select().single();
   if (error) return err(error.code === '23505' ? 'A member with that email already exists' : 'Could not create member');
   await auditLog({ actorId: session.memberId, action: 'member_created', entity: 'members', entityId: data.id, details: { name, email } });
-  return json({ member: data }, 201);
+  // New members set their own password via an emailed link.
+  const invite = await sendInvite(data);
+  return json({ member: publicMember(data), invite_link: invite.link, invite_email_sent: invite.sent }, 201);
+}
+
+/** Admin: (re)send a set-password link — works as invite and as reset. */
+async function adminSendInvite(session, memberId) {
+  const id = validateUuid(memberId);
+  if (!id) return err('Invalid member id');
+  const member = must(await supabase().from(T('members')).select('*').eq('id', id).maybeSingle());
+  if (!member) return err('Member not found', 404);
+  if (!member.is_active) return err('Member is inactive — reactivate them first');
+  const invite = await sendInvite(member, { isReset: !!member.password_hash });
+  await auditLog({ actorId: session.memberId, action: 'invite_sent', entity: 'members', entityId: id });
+  return json({ invite_link: invite.link, invite_email_sent: invite.sent });
 }
 
 async function adminUpdateMember(session, req, memberId) {
@@ -254,7 +316,7 @@ async function adminUpdateMember(session, req, memberId) {
   const { data, error } = await supabase().from(T('members')).update(patch).eq('id', id).select().single();
   if (error) return err('Could not update member');
   await auditLog({ actorId: session.memberId, action: 'member_updated', entity: 'members', entityId: id, details: patch });
-  return json({ member: data });
+  return json({ member: publicMember(data) });
 }
 
 async function adminCreateDraw(session, req) {
@@ -582,6 +644,7 @@ export default async function handler(req) {
   try {
     // Public routes
     if (path === '/api/login' && method === 'POST') return await handleLogin(req);
+    if (path === '/api/set-password' && method === 'POST') return await handleSetPassword(req);
     if (path === '/api/logout' && method === 'POST') {
       return json({ ok: true }, 200, { 'Set-Cookie': clearSessionCookie() });
     }
@@ -613,6 +676,8 @@ export default async function handler(req) {
       if (path === '/api/admin/members' && method === 'POST') return await adminCreateMember(session, req);
       const memberMatch = path.match(/^\/api\/admin\/members\/([^/]+)$/);
       if (memberMatch && method === 'PATCH') return await adminUpdateMember(session, req, memberMatch[1]);
+      const inviteMatch = path.match(/^\/api\/admin\/members\/([^/]+)\/invite$/);
+      if (inviteMatch && method === 'POST') return await adminSendInvite(session, inviteMatch[1]);
       if (path === '/api/admin/draws' && method === 'POST') return await adminCreateDraw(session, req);
       if (path === '/api/admin/tickets' && method === 'POST') return await adminSaveTicket(session, req);
       const publishMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)\/publish$/);

@@ -8,14 +8,15 @@ HTML/CSS/JS in `public/` — no build step.
 
 1. Create a Supabase project (any region; Sydney is closest).
 2. In the SQL editor, run in order:
-   1. `supabase/migrations/001_schema.sql` — tables, constraints, RLS.
-   2. `supabase/migrations/002_settings_init.sql` — **edit the two
-      `CHANGE-ME` passwords first.** This creates the settings row with the
-      bcrypt-hashed shared member password and the separate admin password.
+   1. `supabase/migrations/001_schema.sql` — tables, constraints, RLS,
+      default settings row.
+   2. `supabase/migrations/002_admin_bootstrap.sql` — **edit the `CHANGE-ME`
+      email and password first.** Creates the one bootstrap admin account;
+      every other member is added from the Admin screen and receives an
+      emailed set-password link.
    3. *(Optional, for a demo)* `supabase/seed.sql` — demo members
-      (Alex/Jake/Carl/Brad/Jesse), a published 10-game ticket for the
-      2026-08-27 draw and a fake official result. Demo logins:
-      members `demo-powerball`, admin (alex@example.com) `demo-admin`.
+      (Alex/Jake/Carl/Brad/Jesse, password `demo-powerball` each), a
+      published 10-game ticket for the 2026-08-27 draw and a fake result.
 3. Note your **Project URL** and **service_role key** (Project Settings →
    API). The service role key is server-only — it must never appear in
    frontend code, and it doesn't: the frontend only ever calls `/api/*`.
@@ -88,13 +89,17 @@ Safety properties of both jobs (safe to trigger manually to test):
   If the admin already entered results, the scraper skips the draw; if the
   admin later edits results, manual values win and matching recomputes.
 
-## 6. First login
+## 6. Accounts and passwords
 
-- Members: their email (added by admin) + the shared member password.
-- Admin: the admin member's email + the admin password.
-- There is deliberately no signup, verification or password reset flow.
-  Rotate passwords with SQL (see `002_settings_init.sql` comments) or
-  `node scripts/hash-password.mjs 'new-password'`.
+- Every member has their **own password**. When the admin adds a member, the
+  app emails them a single-use set-password link (valid 7 days); the same
+  "Reset link" button on the Admin screen re-sends it as a password reset.
+  If email isn't configured yet, the link is shown to the admin to pass on.
+- There is deliberately no open signup. To force-set a password with SQL:
+  `update members set password_hash = crypt('new-password', gen_salt('bf', 10)) where email = '...';`
+  (or hash locally with `node scripts/hash-password.mjs`).
+- `SITE_URL` (optional env var) sets the base URL used in emailed links;
+  it defaults to Netlify's own `URL` variable.
 
 ## 7. Removing demo data
 

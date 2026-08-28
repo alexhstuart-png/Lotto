@@ -5,19 +5,13 @@
 -- fake official result so highlighting/matching shows immediately.
 -- All demo rows use fixed UUIDs beginning dddddddd- and is_demo = true.
 
--- Demo login passwords (bcrypt-hashed here, never stored in plaintext):
---   members: demo-powerball   admin (alex): demo-admin
--- The settings row is created only if 002_settings_init.sql hasn't run.
-insert into settings (id, member_password_hash, admin_password_hash)
-values (1, crypt('demo-powerball', gen_salt('bf', 10)), crypt('demo-admin', gen_salt('bf', 10)))
-on conflict (id) do nothing;
-
-insert into members (id, name, email, role, is_active, notifications_enabled, is_demo) values
-  ('dddddddd-0000-0000-0000-000000000001', 'Alex',  'alex@example.com',  'admin',  true, true,  true),
-  ('dddddddd-0000-0000-0000-000000000002', 'Jake',  'jake@example.com',  'member', true, true,  true),
-  ('dddddddd-0000-0000-0000-000000000003', 'Carl',  'carl@example.com',  'member', true, true,  true),
-  ('dddddddd-0000-0000-0000-000000000004', 'Brad',  'brad@example.com',  'member', true, true,  true),
-  ('dddddddd-0000-0000-0000-000000000005', 'Jesse', 'jesse@example.com', 'member', true, false, true)
+-- Demo login password for every demo member (bcrypt-hashed): demo-powerball
+insert into members (id, name, email, role, is_active, notifications_enabled, password_hash, is_demo) values
+  ('dddddddd-0000-0000-0000-000000000001', 'Alex',  'alex@example.com',  'admin',  true, true,  crypt('demo-powerball', gen_salt('bf', 10)), true),
+  ('dddddddd-0000-0000-0000-000000000002', 'Jake',  'jake@example.com',  'member', true, true,  crypt('demo-powerball', gen_salt('bf', 10)), true),
+  ('dddddddd-0000-0000-0000-000000000003', 'Carl',  'carl@example.com',  'member', true, true,  crypt('demo-powerball', gen_salt('bf', 10)), true),
+  ('dddddddd-0000-0000-0000-000000000004', 'Brad',  'brad@example.com',  'member', true, true,  crypt('demo-powerball', gen_salt('bf', 10)), true),
+  ('dddddddd-0000-0000-0000-000000000005', 'Jesse', 'jesse@example.com', 'member', true, false, crypt('demo-powerball', gen_salt('bf', 10)), true)
 on conflict (id) do nothing;
 
 -- Last Thursday's draw, with published ticket and official result.

@@ -8,9 +8,13 @@ validation. Findings were fixed before release; residual notes at the end.
 - Sessions are HS256 JWTs signed with `SESSION_SECRET`, verified with
   `crypto.timingSafeEqual`, delivered as an `HttpOnly; Secure; SameSite=Lax`
   cookie. No token ever reaches JS-readable storage.
-- Login compares against bcrypt hashes (`settings.member_password_hash` /
-  `admin_password_hash`) server-side. Failure responses are identical for
-  unknown email vs wrong password.
+- Each member has their own bcrypt password hash on their member row, set
+  through a single-use invite/reset link: the server stores only the SHA-256
+  of the link token plus an expiry, verifies it with a timing-safe compare,
+  and clears it on use. Failure responses are identical for unknown email,
+  inactive member, unset password, and wrong password.
+- Member rows are sanitised before leaving the server — password hashes and
+  reset-token hashes are never included in any API response.
 - Every authenticated request re-checks the live member row: deactivating a
   member (or demoting an admin) invalidates their existing sessions
   immediately, not at token expiry. *(Fixed during review — member routes

@@ -13,15 +13,16 @@ create table if not exists settings (
   charge_on_publish        boolean not null default true,
   -- Members with a balance strictly below this threshold get Friday reminders.
   owing_threshold_cents    int not null default 0,
-  -- Shared member password + separate admin password, both bcrypt hashes.
-  member_password_hash     text not null,
-  admin_password_hash      text not null,
   updated_at               timestamptz not null default now()
 );
 
+insert into settings (id) values (1) on conflict (id) do nothing;
+
 -- ---------------------------------------------------------------------------
--- Members. Admin is a member row with role='admin' but authenticates with the
--- separate admin password. No signup/reset flows — admin manages members.
+-- Members. Each member has their own bcrypt password, set via a single-use
+-- emailed invite/reset link (only the token's SHA-256 hash is stored). Admin
+-- is a member row with role='admin'. No open signup — admin adds members and
+-- the app emails them a set-password link.
 -- ---------------------------------------------------------------------------
 create table if not exists members (
   id                     uuid primary key default gen_random_uuid(),
@@ -30,6 +31,9 @@ create table if not exists members (
   role                   text not null default 'member' check (role in ('member','admin')),
   is_active              boolean not null default true,
   notifications_enabled  boolean not null default true,
+  password_hash          text,          -- null until the member sets a password
+  reset_token_hash       text,          -- sha256 of the pending invite/reset token
+  reset_token_expires    timestamptz,
   is_demo                boolean not null default false,
   created_at             timestamptz not null default now()
 );
@@ -156,7 +160,7 @@ create table if not exists winnings (
 -- ---------------------------------------------------------------------------
 create table if not exists email_logs (
   id         uuid primary key default gen_random_uuid(),
-  type       text not null check (type in ('reminder','ticket_published','results','admin_alert','announce_win')),
+  type       text not null check (type in ('reminder','ticket_published','results','admin_alert','announce_win','invite')),
   member_id  uuid references members(id),
   draw_id    uuid references draws(id),
   to_email   text not null,

@@ -63,35 +63,125 @@
 
   const reveal = { active: false, el: null, spinStart: 0, failsafe: 0 };
 
+  // Glass-sphere lottery machine: glossy globe on a gold pedestal, wire loop
+  // track behind, delivery chute with drawn balls, vivid 3D balls tumbling
+  // inside. Pure SVG + CSS transform animations.
+  const BALL_SHADES = {
+    red:    ['#ff8a7e', '#e8402f', '#7e150b'],
+    orange: ['#ffc072', '#f07f1f', '#8a3d05'],
+    gold:   ['#ffe9a8', '#e9b93a', '#8a6410'],
+    green:  ['#8ce8ac', '#2fae5f', '#0c5c2b'],
+    blue:   ['#9ccdff', '#3f8fe8', '#123f7e'],
+    purple: ['#c6adff', '#7a4fd0', '#3a1e78'],
+    pink:   ['#ffb0dc', '#e0559f', '#7e1b52'],
+    teal:   ['#9cf4e7', '#2fb9a5', '#0c5a4e'],
+  };
+
+  function glossBall(cx, cy, r, shade, num, cls = '') {
+    const [, , dark] = BALL_SHADES[shade];
+    return `<g class="${cls}">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#bg-${shade})"/>
+      <ellipse cx="${cx - r * 0.36}" cy="${cy - r * 0.46}" rx="${r * 0.30}" ry="${r * 0.17}"
+               fill="rgba(255,255,255,0.75)" transform="rotate(-28 ${cx - r * 0.36} ${cy - r * 0.46})"/>
+      <circle cx="${cx}" cy="${cy}" r="${r * 0.52}" fill="#ffffff"/>
+      <circle cx="${cx}" cy="${cy}" r="${r * 0.52}" fill="none" stroke="rgba(0,0,0,0.10)"/>
+      <text x="${cx}" y="${cy}" font-family="Anton, Arial Black, sans-serif" font-size="${r * 0.66}"
+            fill="${dark}" text-anchor="middle" dominant-baseline="central">${num}</text>
+    </g>`;
+  }
+
   function drumMarkup() {
-    const balls = [
-      [80, 96, '#ffffff'], [112, 128, '#e9c46a'], [95, 140, '#e76f51'],
-      [124, 100, '#7dc4ff'], [88, 118, '#35c46f'], [112, 82, '#f3d27f'],
-    ].map(([cx, cy, fill], i) =>
-      `<circle class="drum-ball b${i}" cx="${cx}" cy="${cy}" r="9" fill="${fill}" stroke="rgba(0,0,0,0.25)"/>`
-    ).join('');
+    const defs = Object.entries(BALL_SHADES).map(([k, [light, mid, dark]]) => `
+      <radialGradient id="bg-${k}" cx="35%" cy="28%" r="80%">
+        <stop offset="0%" stop-color="${light}"/>
+        <stop offset="55%" stop-color="${mid}"/>
+        <stop offset="100%" stop-color="${dark}"/>
+      </radialGradient>`).join('');
+
+    const insideBalls = [
+      [128, 88, 15, 'red', 7], [190, 84, 14, 'blue', 23], [160, 122, 16, 'gold', 31],
+      [126, 128, 14, 'green', 12], [196, 124, 13, 'purple', 4], [160, 68, 13, 'pink', 17],
+      [140, 150, 14, 'orange', 28], [184, 150, 13, 'teal', 9],
+    ].map((b, i) => glossBall(b[0], b[1], b[2], b[3], b[4], `drum-ball b${i}`)).join('');
+
+    const chuteBalls = [
+      [44, 199, 14, 'orange', 12], [80, 189, 14, 'purple', 5], [114, 179, 14, 'teal', 34],
+    ].map((b, i) => glossBall(b[0], b[1], b[2], b[3], b[4], `chute-ball c${i}`)).join('');
+
     const sparks = Array.from({ length: 12 }, (_, i) => {
       const a = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
       const d = 90 + Math.random() * 80;
       return `<span class="spark" style="--dx:${Math.round(Math.cos(a) * d)}px;--dy:${Math.round(Math.sin(a) * d)}px"></span>`;
     }).join('');
+
     return `
       <div class="reveal-inner">
         <div class="drum-wrap">
-          <svg viewBox="0 0 200 225" aria-hidden="true">
-            <path d="M100 178 L66 214 M100 178 L134 214 M54 214 L146 214"
-                  stroke="#c9a227" stroke-width="6" stroke-linecap="round" fill="none"/>
+          <svg viewBox="0 0 320 250" aria-hidden="true">
+            <defs>
+              ${defs}
+              <radialGradient id="glassGrad" cx="38%" cy="30%" r="85%">
+                <stop offset="0%" stop-color="rgba(255,255,255,0.16)"/>
+                <stop offset="60%" stop-color="rgba(255,255,255,0.06)"/>
+                <stop offset="100%" stop-color="rgba(255,255,255,0.02)"/>
+              </radialGradient>
+              <linearGradient id="rimGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#f6dd96"/>
+                <stop offset="50%" stop-color="#e9c46a"/>
+                <stop offset="100%" stop-color="#a8841c"/>
+              </linearGradient>
+              <linearGradient id="tubeGrad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="rgba(255,255,255,0.04)"/>
+                <stop offset="50%" stop-color="rgba(255,255,255,0.20)"/>
+                <stop offset="100%" stop-color="rgba(255,255,255,0.04)"/>
+              </linearGradient>
+              <linearGradient id="pedGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#e9c46a"/>
+                <stop offset="100%" stop-color="#7c6115"/>
+              </linearGradient>
+              <radialGradient id="specGrad" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="rgba(255,255,255,0.55)"/>
+                <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+              </radialGradient>
+            </defs>
+
+            <!-- wire loop track behind the globe -->
+            <circle cx="215" cy="98" r="100" fill="none" stroke="rgba(233,196,106,0.30)" stroke-width="9"/>
+            <circle cx="215" cy="98" r="100" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="3"/>
+            <circle cx="215" cy="98" r="112" fill="none" stroke="rgba(233,196,106,0.16)" stroke-width="6"/>
+
+            <!-- ground shadow + pedestal -->
+            <ellipse cx="160" cy="226" rx="72" ry="9" fill="rgba(0,0,0,0.40)"/>
+            <rect x="142" y="178" width="36" height="30" rx="7" fill="url(#pedGrad)"/>
+            <ellipse cx="160" cy="212" rx="48" ry="11" fill="url(#pedGrad)"/>
+            <ellipse cx="160" cy="209" rx="48" ry="10" fill="#3a2e08"/>
+            <ellipse cx="160" cy="208" rx="44" ry="8" fill="url(#pedGrad)"/>
+
+            <!-- glass sphere (back) -->
+            <circle cx="160" cy="105" r="80" fill="url(#glassGrad)"/>
+            <rect x="152" y="30" width="16" height="150" rx="8" fill="url(#tubeGrad)"/>
+
+            <!-- tumbling balls -->
             <g class="drum-accel">
               <g class="drum-spin">
-                <circle cx="100" cy="110" r="62" fill="none" stroke="rgba(233,196,106,0.35)"
-                        stroke-width="3" stroke-dasharray="18 14"/>
-                <path d="M100 48 V172 M38 110 H162" stroke="rgba(233,196,106,0.3)" stroke-width="3"/>
-                ${balls}
+                <circle cx="160" cy="105" r="62" fill="none"/>
+                ${insideBalls}
               </g>
             </g>
-            <circle cx="100" cy="110" r="70" fill="rgba(233,196,106,0.06)"
-                    stroke="#e9c46a" stroke-width="5"/>
-            <circle cx="100" cy="110" r="4" fill="#e9c46a"/>
+
+            <!-- glass sphere (front): rim, inner line, speculars, top cap -->
+            <circle cx="160" cy="105" r="80" fill="none" stroke="url(#rimGrad)" stroke-width="6"/>
+            <circle cx="160" cy="105" r="73" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="2"/>
+            <ellipse cx="128" cy="60" rx="36" ry="20" fill="url(#specGrad)"
+                     transform="rotate(-30 128 60)"/>
+            <ellipse cx="196" cy="152" rx="20" ry="10" fill="url(#specGrad)" opacity="0.5"
+                     transform="rotate(-30 196 152)"/>
+            <rect x="146" y="16" width="28" height="14" rx="5" fill="url(#rimGrad)"/>
+
+            <!-- delivery chute with drawn balls -->
+            <path d="M12 214 L140 174" stroke="url(#rimGrad)" stroke-width="5" stroke-linecap="round"/>
+            ${chuteBalls}
+            <path d="M12 228 L146 186" stroke="url(#rimGrad)" stroke-width="5" stroke-linecap="round"/>
           </svg>
         </div>
         <div class="reveal-stage"></div>

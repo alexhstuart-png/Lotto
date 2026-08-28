@@ -367,20 +367,30 @@ label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-
 .reveal-inner { position: relative; width: 100%; max-width: 480px; padding: 24px; }
 
 /* the drum */
-.drum-wrap { width: min(62vw, 290px); margin: 0 auto; will-change: transform, opacity; }
+.drum-wrap { width: min(76vw, 340px); margin: 0 auto; will-change: transform, opacity; }
 .drum-wrap svg { display: block; width: 100%; height: auto; }
-.drum-accel, .drum-spin, .drum-ball { transform-box: fill-box; transform-origin: center; }
-/* constant spin + an accelerating wrapper rotation layered on top */
-.drum-spin { animation: drum-rot 1.15s linear infinite; }
-.drum-accel { animation: drum-rot 2s ease-in infinite; }
+.drum-accel, .drum-spin, .drum-ball, .chute-ball { transform-box: fill-box; transform-origin: center; }
+/* contents churn: constant rotation + an accelerating wrapper layered on top */
+.drum-spin { animation: drum-rot 1.6s linear infinite; }
+.drum-accel { animation: drum-rot 2.2s ease-in infinite; }
 @keyframes drum-rot { to { transform: rotate(360deg); } }
-.drum-ball { animation: drum-tumble 0.45s ease-in-out infinite alternate; }
-.drum-ball.b1 { animation-duration: 0.38s; animation-delay: 0.10s; }
-.drum-ball.b2 { animation-duration: 0.52s; animation-delay: 0.05s; }
-.drum-ball.b3 { animation-duration: 0.42s; animation-delay: 0.15s; }
-.drum-ball.b4 { animation-duration: 0.48s; animation-delay: 0.02s; }
-.drum-ball.b5 { animation-duration: 0.36s; animation-delay: 0.20s; }
-@keyframes drum-tumble { from { transform: translate(0, 0); } to { transform: translate(4px, -8px); } }
+/* each ball tumbles on its own arc + spin, phases staggered for chaos */
+.drum-ball { animation: tumble-a 0.42s ease-in-out infinite alternate; }
+.drum-ball.b1 { animation-name: tumble-b; animation-duration: 0.36s; animation-delay: 0.08s; }
+.drum-ball.b2 { animation-name: tumble-c; animation-duration: 0.50s; animation-delay: 0.04s; }
+.drum-ball.b3 { animation-name: tumble-b; animation-duration: 0.44s; animation-delay: 0.15s; }
+.drum-ball.b4 { animation-name: tumble-c; animation-duration: 0.38s; animation-delay: 0.10s; }
+.drum-ball.b5 { animation-name: tumble-a; animation-duration: 0.52s; animation-delay: 0.06s; }
+.drum-ball.b6 { animation-name: tumble-b; animation-duration: 0.40s; animation-delay: 0.12s; }
+.drum-ball.b7 { animation-name: tumble-c; animation-duration: 0.46s; animation-delay: 0.02s; }
+@keyframes tumble-a { to { transform: translate(7px, -11px) rotate(18deg); } }
+@keyframes tumble-b { to { transform: translate(-9px, -8px) rotate(-22deg); } }
+@keyframes tumble-c { to { transform: translate(6px, 9px) rotate(14deg); } }
+/* balls already drawn, resting in the chute */
+.chute-ball { animation: chute-bob 1.1s ease-in-out infinite alternate; }
+.chute-ball.c1 { animation-delay: 0.25s; }
+.chute-ball.c2 { animation-delay: 0.50s; }
+@keyframes chute-bob { to { transform: translateY(-2px); } }
 
 /* the bang */
 .burst .drum-wrap { animation: drum-bang 0.3s cubic-bezier(0.55, 0, 0.8, 0.4) forwards; }

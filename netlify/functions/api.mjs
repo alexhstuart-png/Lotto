@@ -183,11 +183,17 @@ async function handleHome(session) {
   const detail = draw ? await drawDetail(draw) : null;
   const totalWinningsRows = must(await supabase().from(T('winnings')).select('amount_cents'));
   const totalWinnings = totalWinningsRows.reduce((s, r) => s + r.amount_cents, 0);
+  // Everyone's balance is visible to everyone — the who-owes-what board.
+  const allMembers = must(
+    await supabase().from(T('members')).select('id, name, is_active').eq('is_active', true).order('name')
+  );
+  const balances = await memberBalancesCents(allMembers.map((m) => m.id));
   return json({
     balance_cents: balance,
     kitty_cents: kitty,
     weekly_charge_cents: settings.weekly_charge_cents,
     total_winnings_cents: totalWinnings,
+    members: allMembers.map((m) => ({ name: m.name, balance_cents: balances.get(m.id) ?? 0 })),
     current: detail,
   });
 }

@@ -476,6 +476,21 @@
       ${data.balance_cents < 0 ? `<div class="card" style="border-color:rgba(231,111,81,0.5)">
         <p style="margin:0;color:var(--red);font-weight:600">You're ${money(-data.balance_cents)} behind — top up to stay in the draw. Weekly charge is ${money(data.weekly_charge_cents)}.</p>
       </div>` : ''}
+      ${(data.members || []).length ? `
+      <div class="card">
+        <h2>The Syndicate</h2>
+        <div class="member-grid">
+          ${data.members.map((m) => {
+            const owing25 = m.balance_cents <= -2500;
+            const cls = owing25 ? 'danger' : (m.balance_cents < 0 ? 'warn' : '');
+            return `<div class="member-box ${cls}">
+              <div class="mb-name">${esc(m.name)}</div>
+              <div class="mb-balance">${money(m.balance_cents)}</div>
+              ${owing25 ? '<div class="mb-note">OWES MONEY</div>' : ''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : ''}
       ${d ? `
         <div class="card">
           <h2>This week <span style="float:right">${statusChip(d.draw.status)}</span></h2>

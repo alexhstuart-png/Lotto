@@ -11,8 +11,9 @@ create table if not exists settings (
   id                       int primary key default 1 check (id = 1),
   weekly_charge_cents      int not null default 2500 check (weekly_charge_cents >= 0),
   charge_on_publish        boolean not null default true,
-  -- Members with a balance strictly below this threshold get Friday reminders.
-  owing_threshold_cents    int not null default 0,
+  -- Members with a balance at or below this get Friday reminders (prepay
+  -- model: $25 = one draw of credit left, top up before going negative).
+  owing_threshold_cents    int not null default 2500,
   updated_at               timestamptz not null default now()
 );
 

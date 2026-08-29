@@ -31,11 +31,11 @@ test('a failed send does not block a retry, and threshold is respected', () => {
   const logs = [{ member_id: 'jake', status: 'failed' }];
   const r = selectReminderRecipients(members, balances, logs, 0);
   assert.deepEqual(r.map((m) => m.id), ['jake', 'jesse']);
-  // A lower (more negative) threshold narrows who gets reminded.
+  // A lower threshold narrows who gets reminded; the rule is "at or below".
   const r2 = selectReminderRecipients(members, balances, [], -3000);
-  assert.deepEqual(r2.map((m) => m.id), ['jesse']); // only jesse is below -$30
+  assert.deepEqual(r2.map((m) => m.id), ['jesse']); // only jesse is at/below -$30
   const r3 = selectReminderRecipients(members, balances, [], -2500);
-  assert.deepEqual(r3.map((m) => m.id), ['jesse']); // strictly below -$25
+  assert.deepEqual(r3.map((m) => m.id), ['jake', 'jesse']); // both at/below -$25
 });
 
 test('Perth day window: Friday 00:00 UTC cron fires on Perth Friday morning', () => {

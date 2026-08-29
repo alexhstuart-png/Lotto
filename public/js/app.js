@@ -464,11 +464,15 @@
     });
   };
 
+  // Prepay model: members top up in advance and never go negative. Red means
+  // "$25 or less left — one draw of credit, top up now".
+  const LOW_BALANCE_CENTS = 2500;
+
   views.home = async () => {
     const data = await api('/home');
     if (reveal.active) revealSequence(data); // continues on top while home renders below
     const d = data.current;
-    const balCls = data.balance_cents < 0 ? 'owing' : 'credit';
+    const balCls = data.balance_cents <= LOW_BALANCE_CENTS ? 'owing' : 'credit';
     app.innerHTML = header() + `
       <div class="stat-row">
         <div class="stat">
@@ -480,21 +484,18 @@
           <div class="value ${balCls}">${money(data.balance_cents)}</div>
         </div>
       </div>
-      ${data.balance_cents < 0 ? `<div class="card" style="border-color:rgba(231,111,81,0.5)">
-        <p style="margin:0;color:var(--red);font-weight:600">You're ${money(-data.balance_cents)} behind — top up to stay in the draw. Weekly charge is ${money(data.weekly_charge_cents)}.</p>
+      ${data.balance_cents <= LOW_BALANCE_CENTS ? `<div class="card" style="border-color:rgba(231,111,81,0.5)">
+        <p style="margin:0;color:var(--red);font-weight:600">Your balance is ${money(data.balance_cents)} — top up before Thursday to stay in the draw. Weekly ticket is ${money(data.weekly_charge_cents)}.</p>
       </div>` : ''}
       ${(data.members || []).length ? `
       <div class="card">
         <h2>The Syndicate</h2>
         <div class="member-grid">
-          ${data.members.map((m) => {
-            const owing25 = m.balance_cents <= -2500;
-            const cls = owing25 ? 'danger' : (m.balance_cents < 0 ? 'warn' : '');
-            return `<div class="member-box ${cls}">
+          ${data.members.map((m) => `
+            <div class="member-box ${m.balance_cents <= LOW_BALANCE_CENTS ? 'danger' : ''}">
               <div class="mb-name">${esc(m.name)}</div>
               <div class="mb-balance">${moneyShort(m.balance_cents)}</div>
-            </div>`;
-          }).join('')}
+            </div>`).join('')}
         </div>
       </div>` : ''}
       ${d ? `
@@ -557,7 +558,7 @@
 
   views.account = async () => {
     const data = await api('/account');
-    const balCls = data.balance_cents < 0 ? 'owing' : 'credit';
+    const balCls = data.balance_cents <= LOW_BALANCE_CENTS ? 'owing' : 'credit';
     const txns = data.transactions.map((t) => {
       const labels = {
         weekly_charge: 'Weekly ticket charge',
@@ -765,7 +766,7 @@
             <span>Charge members on publish</span>
             <span class="toggle"><input type="checkbox" id="setCharge" ${data.settings.charge_on_publish ? 'checked' : ''}><span class="track"></span></span>
           </div>
-          <label>Reminder threshold ($ — remind when balance below this)</label>
+          <label>Reminder threshold ($ — remind when balance is at or below this)</label>
           <input id="setThreshold" type="number" step="0.01" value="${(data.settings.owing_threshold_cents / 100).toFixed(2)}">
           <div class="form-msg" id="setMsg"></div>
           <div class="pill-btns">

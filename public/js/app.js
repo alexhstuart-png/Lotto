@@ -24,6 +24,13 @@
     });
   };
 
+  // Compact money for tight spaces: whole dollars drop the cents ("-$25").
+  const moneyShort = (cents) => {
+    const sign = cents < 0 ? '-' : '';
+    const abs = Math.abs(cents);
+    return sign + '$' + (abs % 100 === 0 ? (abs / 100).toString() : (abs / 100).toFixed(2));
+  };
+
   const fmtDate = (iso) => {
     if (!iso) return '';
     const d = new Date(iso + (iso.length === 10 ? 'T12:00:00' : ''));
@@ -485,8 +492,7 @@
             const cls = owing25 ? 'danger' : (m.balance_cents < 0 ? 'warn' : '');
             return `<div class="member-box ${cls}">
               <div class="mb-name">${esc(m.name)}</div>
-              <div class="mb-balance">${money(m.balance_cents)}</div>
-              ${owing25 ? '<div class="mb-note">OWES MONEY</div>' : ''}
+              <div class="mb-balance">${moneyShort(m.balance_cents)}</div>
             </div>`;
           }).join('')}
         </div>

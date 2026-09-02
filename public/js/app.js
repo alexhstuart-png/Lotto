@@ -718,8 +718,8 @@
         <div class="card">
           <label>Draw</label>
           <select id="ticketDraw">${drawOptions}</select>
-          <input id="scanFile" type="file" accept="image/*" capture="environment" style="display:none">
-          <button class="btn secondary" id="scanBtn" style="margin:6px 0 12px">📷 Scan ticket photo</button>
+          <input id="scanFile" type="file" accept="image/*" capture="environment" multiple style="display:none">
+          <button class="btn secondary" id="scanBtn" style="margin:6px 0 12px">📷 Scan ticket photo(s)</button>
           <div class="form-msg" id="scanMsg"></div>
           <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for System). PowerHit: mains then <code>PH</code></label>
           <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
@@ -877,36 +877,53 @@
     // 📷 Scan ticket photo: downscale client-side, send to the server, and
     // PRE-FILL the games editor. The admin checks the numbers against the
     // paper ticket before saving — a scan never saves anything by itself.
+    // Multiple tickets: each scan APPENDS to the games list (duplicate lines
+    // skipped), so you can snap ticket 1, then ticket 2 — or select several
+    // photos at once — and publish the lot together.
     const scanInput = document.getElementById('scanFile');
     on('scanBtn', () => scanInput.click());
     scanInput.addEventListener('change', async () => {
-      const file = scanInput.files && scanInput.files[0];
+      const files = Array.from(scanInput.files || []);
       scanInput.value = '';
-      if (!file) return;
+      if (!files.length) return;
       const btn = document.getElementById('scanBtn');
       btn.disabled = true;
-      msg('scanMsg', 'Reading ticket…', true);
+      const ta = document.getElementById('ticketGames');
+      let added = 0;
+      let skippedDup = 0;
+      const notes = [];
       try {
-        const img = await createImageBitmap(file);
-        const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        const base64 = dataUrl.split(',')[1];
+        for (let i = 0; i < files.length; i++) {
+          msg('scanMsg', `Reading photo ${i + 1} of ${files.length}…`, true);
+          const img = await createImageBitmap(files[i]);
+          const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
 
-        const out = await api('/admin/tickets/scan', {
-          method: 'POST',
-          body: { image: base64, media_type: 'image/jpeg' },
-        });
-        document.getElementById('ticketGames').value =
-          out.games.map(gameToLine).join('\n');
+          const out = await api('/admin/tickets/scan', {
+            method: 'POST',
+            body: { image: base64, media_type: 'image/jpeg' },
+          });
+          const existing = new Set(ta.value.split('\n').map((l) => l.trim()).filter(Boolean));
+          for (const g of out.games) {
+            const line = gameToLine(g);
+            if (existing.has(line)) { skippedDup++; continue; }
+            existing.add(line);
+            ta.value = ta.value.trim() ? ta.value.trim() + '\n' + line : line;
+            added++;
+          }
+          if (out.notes) notes.push(out.notes);
+          if (out.rejected) notes.push(`${out.rejected} unreadable line(s) skipped`);
+        }
+        const total = ta.value.split('\n').filter((l) => l.trim()).length;
         const extras = [
-          out.notes,
-          out.rejected ? `${out.rejected} unreadable line(s) skipped` : '',
+          skippedDup ? `${skippedDup} duplicate(s) skipped` : '',
+          ...notes,
         ].filter(Boolean).join(' · ');
-        msg('scanMsg', `Read ${out.games.length} game(s)${extras ? ` (${extras})` : ''} — CHECK every number against the ticket before publishing`, true);
+        msg('scanMsg', `Added ${added} game(s) from ${files.length} photo(s) — ${total} total${extras ? ` (${extras})` : ''}. CHECK every number before publishing`, true);
       } catch (e) {
         msg('scanMsg', e.message, false);
       }

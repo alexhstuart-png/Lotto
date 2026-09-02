@@ -1,6 +1,9 @@
 [build]
   publish = "public"
   functions = "netlify/functions"
+  # No-op unless TEST_EMAIL_TO is set: sends one test email through Resend
+  # from the build (which has network access). Never fails the build.
+  command = "node scripts/send-test-email.mjs"
 
 [functions]
   node_bundler = "esbuild"

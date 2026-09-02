@@ -278,7 +278,9 @@
     const balls = game.numbers.map((n) =>
       `<span class="ball${matched.has(n) ? ' matched' : ''}">${n}</span>`
     ).join('');
-    const pb = `<span class="ball pb${match && match.powerballMatched ? ' matched' : ''}">${game.powerball}</span>`;
+    const pb = game.powerhit
+      ? `<span class="ball pb ph${match && match.powerballMatched ? ' matched' : ''}">PH</span>`
+      : `<span class="ball pb${match && match.powerballMatched ? ' matched' : ''}">${game.powerball}</span>`;
     const count = match
       ? `<span class="match-count${match.matchCount >= 3 || match.isWinner ? ' hot' : ''}">${match.matchCount}${match.powerballMatched ? '+PB' : ''}</span>`
       : '';
@@ -620,15 +622,27 @@
   // ---------- admin ----------
 
   // A line is the mains then the Powerball last: 8 numbers for a standard
-  // game (7+PB), 9-21 for a System 8-20 entry.
+  // game (7+PB), 9-21 for a System 8-20 entry. A trailing "PH" instead of a
+  // Powerball marks a PowerHit (plays all 20 Powerballs).
   function parseGameLine(line, { exactMains = null } = {}) {
-    const nums = line.trim().split(/[\s,:+]+/).filter(Boolean).map(Number);
-    if (nums.some((n) => !Number.isInteger(n))) return null;
-    const mains = nums.slice(0, -1);
+    const tokens = line.trim().split(/[\s,:+]+/).filter(Boolean);
+    if (tokens.length < 2) return null;
+    const last = tokens[tokens.length - 1];
+    const powerhit = /^ph$/i.test(last) || /^powerhit$/i.test(last);
+    if (powerhit && exactMains !== null) return null; // results can't be PowerHit
+    const mainTokens = tokens.slice(0, -1);
+    const mains = mainTokens.map(Number);
+    if (mains.some((n) => !Number.isInteger(n))) return null;
     if (exactMains !== null && mains.length !== exactMains) return null;
     if (mains.length < 7 || mains.length > 20) return null;
-    return { numbers: mains, powerball: nums[nums.length - 1] };
+    if (powerhit) return { numbers: mains, powerball: null, powerhit: true };
+    const pb = Number(last);
+    if (!Number.isInteger(pb)) return null;
+    return { numbers: mains, powerball: pb, powerhit: false };
   }
+
+  // Render a game back into its text-line form for the editor.
+  const gameToLine = (g) => g.numbers.join(' ') + ' ' + (g.powerhit ? 'PH' : g.powerball);
 
   views.admin = async () => {
     const data = await api('/admin/overview');
@@ -659,7 +673,7 @@
       .map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
 
     const currentGamesText = activeDraw && activeDraw.games.length
-      ? activeDraw.games.map((g) => g.numbers.join(' ') + ' ' + g.powerball).join('\n') : '';
+      ? activeDraw.games.map(gameToLine).join('\n') : '';
 
     const emailRows = data.email_logs.map((l) => `
       <div class="list-row">
@@ -707,7 +721,7 @@
           <input id="scanFile" type="file" accept="image/*" capture="environment" style="display:none">
           <button class="btn secondary" id="scanBtn" style="margin:6px 0 12px">📷 Scan ticket photo</button>
           <div class="form-msg" id="scanMsg"></div>
-          <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for a System entry)</label>
+          <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for System). PowerHit: mains then <code>PH</code></label>
           <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
           <label>Ticket cost ($)</label>
           <input id="ticketCost" type="number" step="0.01" min="0" value="${activeDraw && activeDraw.ticket ? (activeDraw.ticket.cost_cents / 100).toFixed(2) : ''}">
@@ -816,7 +830,7 @@
     document.getElementById('ticketDraw').addEventListener('change', (e) => {
       const d = draws.find((x) => x.draw.id === e.target.value);
       document.getElementById('ticketGames').value = d && d.games.length
-        ? d.games.map((g) => g.numbers.join(' ') + ' ' + g.powerball).join('\n') : '';
+        ? d.games.map(gameToLine).join('\n') : '';
       document.getElementById('ticketCost').value = d && d.ticket
         ? (d.ticket.cost_cents / 100).toFixed(2) : '';
     });
@@ -887,7 +901,7 @@
           body: { image: base64, media_type: 'image/jpeg' },
         });
         document.getElementById('ticketGames').value =
-          out.games.map((g) => g.numbers.join(' ') + ' ' + g.powerball).join('\n');
+          out.games.map(gameToLine).join('\n');
         const extras = [
           out.notes,
           out.rejected ? `${out.rejected} unreadable line(s) skipped` : '',

@@ -488,3 +488,12 @@ label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-
 @media (max-width: 374px) {
   .game-line.sys .ball { width: 23px; height: 23px; font-size: 10px; }
 }
+
+/* ---------- PowerHit: plays every Powerball 1-20 ---------- */
+.ball.pb.ph {
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  background: linear-gradient(180deg, #f6d989, var(--gold-deep));
+  color: var(--gold-ink);
+  border-color: #8a6d13;
+}

@@ -60,7 +60,7 @@ async function drawDetail(draw) {
   let games = [];
   if (ticket) {
     games = must(
-      await supabase().from(T('games')).select('id, game_index, numbers, powerball')
+      await supabase().from(T('games')).select('id, game_index, numbers, powerball, powerhit')
         .eq('ticket_id', ticket.id).order('game_index')
     );
   }
@@ -361,7 +361,7 @@ async function adminSaveTicket(session, req) {
   for (let i = 0; i < body.games.length; i++) {
     const v = validateGame(body.games[i]);
     if (!v.ok) return err(`Game ${i + 1}: ${v.error}`);
-    games.push({ game_index: i + 1, numbers: v.numbers, powerball: v.powerball });
+    games.push({ game_index: i + 1, numbers: v.numbers, powerball: v.powerball, powerhit: v.powerhit });
   }
   const draw = must(await supabase().from(T('draws')).select('*').eq('id', drawId).maybeSingle());
   if (!draw) return err('Draw not found', 404);
@@ -372,7 +372,7 @@ async function adminSaveTicket(session, req) {
   if (ticket) {
     if (editingPublished) {
       previousGames = must(
-        await supabase().from(T('games')).select('game_index, numbers, powerball')
+        await supabase().from(T('games')).select('game_index, numbers, powerball, powerhit')
           .eq('ticket_id', ticket.id).order('game_index')
       );
     }
@@ -420,7 +420,7 @@ async function adminPublishTicket(session, req, ticketId) {
   if (!ticket) return err('Ticket not found', 404);
   const draw = must(await supabase().from(T('draws')).select('*').eq('id', ticket.draw_id).single());
   const games = must(
-    await supabase().from(T('games')).select('game_index, numbers, powerball')
+    await supabase().from(T('games')).select('game_index, numbers, powerball, powerhit')
       .eq('ticket_id', id).order('game_index')
   );
   if (games.length === 0) return err('Add at least one game before publishing');

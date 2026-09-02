@@ -45,3 +45,16 @@ test('System entries: 8-20 mains valid for games, results stay exactly 7', () =>
   assert.equal(validateResult({ numbers: [1, 2, 3, 4, 5, 6, 7, 8], powerball: 5 }).ok, false);
   assert.equal(validateResult({ numbers: [1, 2, 3, 4, 5, 6, 7], powerball: 5 }).ok, true);
 });
+
+test('PowerHit validation: no single powerball; results never PowerHit', () => {
+  const ph = validateGame({ numbers: [1, 2, 3, 4, 5, 6, 7], powerhit: true });
+  assert.equal(ph.ok, true);
+  assert.equal(ph.powerball, null);
+  assert.equal(ph.powerhit, true);
+  // PowerHit with a powerball set is contradictory
+  assert.equal(validateGame({ numbers: [1, 2, 3, 4, 5, 6, 7], powerball: 5, powerhit: true }).ok, false);
+  // System PowerHit (8 mains + all PBs) is fine
+  assert.equal(validateGame({ numbers: [1, 2, 3, 4, 5, 6, 7, 8], powerhit: true }).ok, true);
+  // official results can never be PowerHit
+  assert.equal(validateResult({ numbers: [1, 2, 3, 4, 5, 6, 7], powerhit: true }).ok, false);
+});

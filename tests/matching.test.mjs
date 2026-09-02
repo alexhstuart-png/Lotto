@@ -77,3 +77,15 @@ test('System 8 entry: intersection highlighting and best-line division', () => {
   assert.deepEqual(m2.matchedNumbers, [1, 2, 3, 4]);
   assert.equal(m2.division, null);
 });
+
+test('PowerHit: powerball always counts as matched, division reflects it', () => {
+  const result = { numbers: [1, 2, 3, 4, 5, 6, 7], powerball: 10 };
+  // PowerHit with all 7 mains matched -> Division 1 regardless of the drawn PB
+  const ph = matchGame({ numbers: [1, 2, 3, 4, 5, 6, 7], powerball: null, powerhit: true }, result);
+  assert.equal(ph.powerballMatched, true);
+  assert.equal(ph.division, 1);
+  // PowerHit with 2 mains matched -> Division 9 (2 + PB)
+  const ph2 = matchGame({ numbers: [1, 2, 11, 12, 13, 14, 15], powerball: null, powerhit: true }, result);
+  assert.equal(ph2.division, 9);
+  assert.equal(ph2.isWinner, true);
+});

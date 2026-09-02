@@ -61,3 +61,19 @@ test('matchTicket flags winner and sets draw status', () => {
   assert.equal(win.winners[0].gameIndex, 2);
   assert.equal(win.winners[0].division, 9);
 });
+
+test('System 8 entry: intersection highlighting and best-line division', () => {
+  
+  // official 7 mains all inside the system 8 picks + PB matched -> best line Div 1
+  const result = { numbers: [1, 2, 3, 4, 5, 6, 7], powerball: 10 };
+  const sys8 = { numbers: [1, 2, 3, 4, 5, 6, 7, 20], powerball: 10 };
+  const m = matchGame(sys8, result);
+  assert.equal(m.matchCount, 7);
+  assert.equal(m.powerballMatched, true);
+  assert.equal(m.division, 1);
+  assert.equal(m.isWinner, true);
+  // partial: 4 of the 8 mains match, no PB -> not a winning line
+  const m2 = matchGame({ numbers: [1, 2, 3, 4, 21, 22, 23, 24], powerball: 3 }, result);
+  assert.deepEqual(m2.matchedNumbers, [1, 2, 3, 4]);
+  assert.equal(m2.division, null);
+});

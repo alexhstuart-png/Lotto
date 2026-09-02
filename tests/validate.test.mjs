@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateGame, validateEmail, validateCents, validateDate, validateUuid } from '../lib/validate.mjs';
+import { validateGame, validateResult, validateEmail, validateCents, validateDate, validateUuid } from '../lib/validate.mjs';
 
 test('valid Powerball game passes and mains come back sorted', () => {
   const v = validateGame({ numbers: [35, 1, 17, 22, 31, 4, 11], powerball: 20 });
@@ -32,4 +32,16 @@ test('email / cents / date / uuid validators', () => {
   assert.equal(validateDate('27/08/2026'), null);
   assert.equal(validateUuid('dddddddd-0000-0000-0000-000000000001'), 'dddddddd-0000-0000-0000-000000000001');
   assert.equal(validateUuid('not-a-uuid'), null);
+});
+
+test('System entries: 8-20 mains valid for games, results stay exactly 7', () => {
+  const sys8 = validateGame({ numbers: [1, 2, 3, 4, 5, 6, 7, 8], powerball: 5 });
+  assert.equal(sys8.ok, true);
+  assert.equal(sys8.numbers.length, 8);
+  const sys20 = validateGame({ numbers: Array.from({ length: 20 }, (_, i) => i + 1), powerball: 5 });
+  assert.equal(sys20.ok, true);
+  assert.equal(validateGame({ numbers: Array.from({ length: 21 }, (_, i) => i + 1), powerball: 5 }).ok, false);
+  // official results must be exactly 7 mains
+  assert.equal(validateResult({ numbers: [1, 2, 3, 4, 5, 6, 7, 8], powerball: 5 }).ok, false);
+  assert.equal(validateResult({ numbers: [1, 2, 3, 4, 5, 6, 7], powerball: 5 }).ok, true);
 });

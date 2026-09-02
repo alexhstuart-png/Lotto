@@ -282,8 +282,9 @@
     const count = match
       ? `<span class="match-count${match.matchCount >= 3 || match.isWinner ? ' hot' : ''}">${match.matchCount}${match.powerballMatched ? '+PB' : ''}</span>`
       : '';
-    return `<div class="game-line${mini ? ' mini' : ''}">
-      <span class="gnum">G${game.game_index}</span>${balls}${pb}${count}
+    const sys = game.numbers.length > 7 ? ' sys' : ''; // System entry: smaller balls to fit
+    return `<div class="game-line${sys}${mini ? ' mini' : ''}">
+      <span class="gnum">${game.numbers.length > 7 ? 'S' + game.numbers.length : 'G' + game.game_index}</span>${balls}${pb}${count}
     </div>`;
   }
 
@@ -618,10 +619,15 @@
 
   // ---------- admin ----------
 
-  function parseGameLine(line) {
+  // A line is the mains then the Powerball last: 8 numbers for a standard
+  // game (7+PB), 9-21 for a System 8-20 entry.
+  function parseGameLine(line, { exactMains = null } = {}) {
     const nums = line.trim().split(/[\s,:+]+/).filter(Boolean).map(Number);
-    if (nums.length !== 8 || nums.some((n) => !Number.isInteger(n))) return null;
-    return { numbers: nums.slice(0, 7), powerball: nums[7] };
+    if (nums.some((n) => !Number.isInteger(n))) return null;
+    const mains = nums.slice(0, -1);
+    if (exactMains !== null && mains.length !== exactMains) return null;
+    if (mains.length < 7 || mains.length > 20) return null;
+    return { numbers: mains, powerball: nums[nums.length - 1] };
   }
 
   views.admin = async () => {
@@ -701,7 +707,7 @@
           <input id="scanFile" type="file" accept="image/*" capture="environment" style="display:none">
           <button class="btn secondary" id="scanBtn" style="margin:6px 0 12px">📷 Scan ticket photo</button>
           <div class="form-msg" id="scanMsg"></div>
-          <label>Games — one per line: 7 mains then the Powerball (e.g. <code>4 11 17 22 31 40 2 7</code>)</label>
+          <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for a System entry)</label>
           <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
           <label>Ticket cost ($)</label>
           <input id="ticketCost" type="number" step="0.01" min="0" value="${activeDraw && activeDraw.ticket ? (activeDraw.ticket.cost_cents / 100).toFixed(2) : ''}">
@@ -895,9 +901,9 @@
 
     const collectGames = () => {
       const lines = val('ticketGames').split('\n').map((l) => l.trim()).filter(Boolean);
-      const games = lines.map(parseGameLine);
+      const games = lines.map((l) => parseGameLine(l));
       if (games.length === 0 || games.some((g) => g === null)) {
-        throw new Error('Each line needs exactly 8 numbers: 7 mains (1-35) then the Powerball (1-20)');
+        throw new Error('Each line: 7 mains (or 8-20 for a System entry) then the Powerball last');
       }
       return games;
     };
@@ -921,7 +927,7 @@
 
     on('resultsBtn', () => act('resultsMsg',
       () => {
-        const parsed = parseGameLine(val('resultsNumbers'));
+        const parsed = parseGameLine(val('resultsNumbers'), { exactMains: 7 });
         if (!parsed) throw new Error('Enter exactly 8 numbers: 7 mains then the Powerball');
         return api('/admin/results', {
           method: 'POST',

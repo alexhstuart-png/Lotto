@@ -478,3 +478,13 @@ label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-
 }
 .member-box.danger .mb-name { color: var(--red); }
 .member-box.danger .mb-balance { color: var(--red); }
+
+/* ---------- System entries (8-20 mains): shrink balls to fit the row ---------- */
+.game-line.sys { gap: 3px; }
+.game-line.sys .ball { width: 26px; height: 26px; font-size: 11px; }
+.game-line.sys .ball.pb { margin-left: 4px; }
+.game-line.sys .gnum { color: var(--gold); }
+.ticket-stub .game-line.sys .gnum { color: rgba(28, 21, 3, 0.75); }
+@media (max-width: 374px) {
+  .game-line.sys .ball { width: 23px; height: 23px; font-size: 10px; }
+}

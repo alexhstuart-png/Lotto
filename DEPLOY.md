@@ -56,6 +56,7 @@ here** — never in the repo, never in frontend code.
 | `EMAIL_FROM` | recommended | From address, e.g. `Work Lotto <lotto@yourdomain.com>` |
 | `ADMIN_ALERT_EMAIL` | optional | Where scraper-failure alerts go; defaults to all active admin members |
 | `RESULTS_PROVIDER` | optional | Results provider name; defaults to `thelott` |
+| `ANTHROPIC_API_KEY` | optional | Enables 📷 ticket photo scanning (Claude vision). Without it the scan button explains it isn't set up; manual entry always works. Get a key at console.anthropic.com |
 
 ## 4. Deploy to Netlify
 

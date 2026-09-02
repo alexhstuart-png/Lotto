@@ -24,6 +24,7 @@ import { sendEmail, ticketPublishedEmail, announceWinEmail, inviteEmail } from '
 import { selectBroadcastAudience } from '../../lib/audience.mjs';
 import { runReminders } from '../../lib/reminders-runner.mjs';
 import { createInviteToken, verifyInviteToken, validatePassword } from '../../lib/invites.mjs';
+import { scanTicketImage } from '../../lib/ticket-scan.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -398,6 +399,20 @@ async function adminSaveTicket(session, req) {
   return json({ ticket_id: ticket.id, games_saved: games.length, edited_published: !!editingPublished });
 }
 
+/** Admin: read the game lines off a photo of the paper ticket (pre-fill only). */
+async function adminScanTicket(session, req) {
+  const body = await readBody(req);
+  try {
+    const result = await scanTicketImage({
+      imageBase64: body.image,
+      mediaType: typeof body.media_type === 'string' ? body.media_type : '',
+    });
+    return json(result);
+  } catch (e) {
+    return err(e.message, 400);
+  }
+}
+
 async function adminPublishTicket(session, req, ticketId) {
   const id = validateUuid(ticketId);
   if (!id) return err('Invalid ticket id');
@@ -456,14 +471,19 @@ async function adminPublishTicket(session, req, ticketId) {
   }
 
   // Email every active member with notifications enabled — first publish only.
+  // Personalised: this week's numbers, the draw date, and THEIR balance after
+  // the charge (balances computed post-charge so the email reflects reality).
   let emailed = 0;
   if (firstPublish) {
     const kitty = await kittyBalanceCents();
     const audience = selectBroadcastAudience(allMembers);
+    const balances = await memberBalancesCents(audience.map((m) => m.id));
     for (const m of audience) {
       const tpl = ticketPublishedEmail({
         memberName: m.name, drawDate: draw.draw_date, games,
         costCents: ticket.cost_cents, kittyCents: kitty,
+        balanceCents: balances.get(m.id) ?? 0,
+        weeklyChargeCents: settings.weekly_charge_cents,
       });
       const { sent } = await sendEmail({
         ...tpl, to: m.email, type: 'ticket_published', memberId: m.id, drawId: draw.id,
@@ -691,6 +711,7 @@ export default async function handler(req) {
       if (inviteMatch && method === 'POST') return await adminSendInvite(session, inviteMatch[1]);
       if (path === '/api/admin/draws' && method === 'POST') return await adminCreateDraw(session, req);
       if (path === '/api/admin/tickets' && method === 'POST') return await adminSaveTicket(session, req);
+      if (path === '/api/admin/tickets/scan' && method === 'POST') return await adminScanTicket(session, req);
       const publishMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)\/publish$/);
       if (publishMatch && method === 'POST') return await adminPublishTicket(session, req, publishMatch[1]);
       if (path === '/api/admin/results' && method === 'POST') return await adminEnterResults(session, req);

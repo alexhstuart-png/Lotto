@@ -698,6 +698,9 @@
         <div class="card">
           <label>Draw</label>
           <select id="ticketDraw">${drawOptions}</select>
+          <input id="scanFile" type="file" accept="image/*" capture="environment" style="display:none">
+          <button class="btn secondary" id="scanBtn" style="margin:6px 0 12px">📷 Scan ticket photo</button>
+          <div class="form-msg" id="scanMsg"></div>
           <label>Games — one per line: 7 mains then the Powerball (e.g. <code>4 11 17 22 31 40 2 7</code>)</label>
           <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
           <label>Ticket cost ($)</label>
@@ -850,6 +853,45 @@
     on('ndBtn', () => act('ndMsg',
       () => api('/admin/draws', { method: 'POST', body: { draw_date: val('ndDate') } }),
       () => 'Draw created'));
+
+    // 📷 Scan ticket photo: downscale client-side, send to the server, and
+    // PRE-FILL the games editor. The admin checks the numbers against the
+    // paper ticket before saving — a scan never saves anything by itself.
+    const scanInput = document.getElementById('scanFile');
+    on('scanBtn', () => scanInput.click());
+    scanInput.addEventListener('change', async () => {
+      const file = scanInput.files && scanInput.files[0];
+      scanInput.value = '';
+      if (!file) return;
+      const btn = document.getElementById('scanBtn');
+      btn.disabled = true;
+      msg('scanMsg', 'Reading ticket…', true);
+      try {
+        const img = await createImageBitmap(file);
+        const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        const base64 = dataUrl.split(',')[1];
+
+        const out = await api('/admin/tickets/scan', {
+          method: 'POST',
+          body: { image: base64, media_type: 'image/jpeg' },
+        });
+        document.getElementById('ticketGames').value =
+          out.games.map((g) => g.numbers.join(' ') + ' ' + g.powerball).join('\n');
+        const extras = [
+          out.notes,
+          out.rejected ? `${out.rejected} unreadable line(s) skipped` : '',
+        ].filter(Boolean).join(' · ');
+        msg('scanMsg', `Read ${out.games.length} game(s)${extras ? ` (${extras})` : ''} — CHECK every number against the ticket before publishing`, true);
+      } catch (e) {
+        msg('scanMsg', e.message, false);
+      }
+      btn.disabled = false;
+    });
 
     const collectGames = () => {
       const lines = val('ticketGames').split('\n').map((l) => l.trim()).filter(Boolean);

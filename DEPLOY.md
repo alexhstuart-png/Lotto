@@ -56,7 +56,7 @@ here** — never in the repo, never in frontend code.
 | `EMAIL_FROM` | recommended | From address, e.g. `Work Lotto <lotto@yourdomain.com>` |
 | `ADMIN_ALERT_EMAIL` | optional | Where scraper-failure alerts go; defaults to all active admin members |
 | `RESULTS_PROVIDER` | optional | Results provider name; defaults to `thelott` |
-| `ANTHROPIC_API_KEY` | optional | Enables 📷 ticket photo scanning (Claude vision). Without it the scan button explains it isn't set up; manual entry always works. Get a key at console.anthropic.com |
+| `ANTHROPIC_API_KEY` | optional | Enables 📷 ticket photo scanning (Claude vision). Easiest: enable **Netlify AI Gateway** for the site — it injects this (and `ANTHROPIC_BASE_URL`) automatically and bills through Netlify. A manually set key from console.anthropic.com also works. Manual entry always works without it |
 
 ## 4. Deploy to Netlify
 

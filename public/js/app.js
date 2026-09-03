@@ -1181,7 +1181,9 @@
         const out = await api('/admin/results/fetch', { method: 'POST' });
         const messages = {
           saved: out.hasWinner ? '🏆 WINNER! Results saved and matched' : '✅ Results in — ticket lit up, no winning line',
-          skipped: 'Results were already saved for this draw',
+          skipped: out.reason === 'dividends_backfilled'
+            ? '💰 Official dividends added — estimated winnings now showing'
+            : 'Results were already saved for this draw',
           no_draw: 'No draw is waiting for results',
           fetch_failed: "Results aren't up yet (or the source is down) — try again in a few minutes, or enter them manually below",
           mismatch: `The source's latest draw (${out.scrapedDate || '?'}) doesn't match ours yet — try again shortly`,

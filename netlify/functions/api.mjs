@@ -599,12 +599,15 @@ async function adminConfirmWinnings(session, req) {
   const draw = must(await supabase().from(T('draws')).select('*').eq('id', drawId).maybeSingle());
   if (!draw) return err('Draw not found', 404);
 
-  const winning = must(
-    await supabase().from(T('winnings')).insert({
-      draw_id: drawId, game_index: gameIndex, division, amount_cents: amount,
-      added_to_kitty: addToKitty, confirmed_by: session.memberId,
-    }).select().single()
-  );
+  const { data: winning, error: winErr } = await supabase().from(T('winnings')).insert({
+    draw_id: drawId, game_index: gameIndex, division, amount_cents: amount,
+    added_to_kitty: addToKitty, confirmed_by: session.memberId,
+  }).select().single();
+  if (winErr) {
+    return err(winErr.code === '23505'
+      ? 'That game line is already recorded (it may have been auto-recorded from the official dividend)'
+      : 'Could not record winnings');
+  }
   if (addToKitty) {
     must(
       await supabase().from(T('kitty_transactions')).insert({

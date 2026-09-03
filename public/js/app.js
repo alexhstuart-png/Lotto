@@ -1180,10 +1180,11 @@
       btn.textContent = 'Fetching…';
       try {
         const out = await api('/admin/results/fetch', { method: 'POST' });
+        const auto = out.autoRecorded ? ` — ${out.autoRecorded} winning line(s) auto-banked to the kitty 💰` : '';
         const messages = {
-          saved: out.hasWinner ? '🏆 WINNER! Results saved and matched' : '✅ Results in — ticket lit up, no winning line',
+          saved: out.hasWinner ? `🏆 WINNER! Results saved and matched${auto}` : '✅ Results in — ticket lit up, no winning line',
           skipped: out.reason === 'dividends_backfilled'
-            ? '💰 Official dividends added — estimated winnings now showing'
+            ? `💰 Official dividends added${auto || ' — estimates now showing'}`
             : 'Results were already saved for this draw',
           no_draw: 'No draw is waiting for results',
           fetch_failed: "Results aren't up yet (or the source is down) — try again in a few minutes, or enter them manually below",

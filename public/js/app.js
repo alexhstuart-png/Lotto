@@ -979,6 +979,7 @@
         <h2>Confirm Winnings</h2>
         <div class="card">
           <label>Draw</label><select id="winDraw">${drawOptions}</select>
+          <div class="form-msg ok" id="winHint"></div>
           <div class="grid-2">
             <div><label>Division (1-9, optional)</label><input id="winDivision" type="number" min="1" max="9"></div>
             <div><label>Game # (optional)</label><input id="winGame" type="number" min="1"></div>
@@ -1213,6 +1214,33 @@
       }),
       () => 'Payment recorded'));
 
+    // Auto-fill Confirm Winnings from detected winners + official dividends:
+    // one line at a time, next line queues up after each confirm.
+    const pendingWins = new Map(); // draw id -> [{gameIndex, division, amountCents}]
+    for (const d of draws) {
+      if (!d.matching || !d.matching.hasWinner) continue;
+      const confirmedIdx = new Set((d.winnings || []).map((w) => w.game_index));
+      const estBy = new Map(((d.estimate && d.estimate.lines) || []).map((l) => [l.gameIndex, l.amountCents]));
+      const pend = d.matching.winners
+        .filter((w) => !confirmedIdx.has(w.gameIndex))
+        .map((w) => ({ gameIndex: w.gameIndex, division: w.division, amountCents: estBy.get(w.gameIndex) ?? null }));
+      if (pend.length) pendingWins.set(d.draw.id, pend);
+    }
+    const winDrawSel = document.getElementById('winDraw');
+    const prefillWin = () => {
+      const hint = document.getElementById('winHint');
+      const pend = pendingWins.get(winDrawSel.value) || [];
+      const next = pend[0];
+      if (!next) { hint.textContent = ''; return; }
+      document.getElementById('winDivision').value = next.division ?? '';
+      document.getElementById('winGame').value = next.gameIndex ?? '';
+      document.getElementById('winAmount').value = next.amountCents != null ? (next.amountCents / 100).toFixed(2) : '';
+      hint.textContent = `${pend.length} unconfirmed winning line(s) detected — pre-filled Game ${next.gameIndex}, Div ${next.division}` +
+        (next.amountCents != null ? ` at the official $${(next.amountCents / 100).toFixed(2)} dividend. Just hit Confirm.` : '. Enter the payout amount.');
+    };
+    winDrawSel.addEventListener('change', prefillWin);
+    prefillWin();
+
     let lastWinningId = null;
     on('winBtn', () => act('winMsg',
       async () => {
@@ -1228,9 +1256,17 @@
         });
         lastWinningId = out.winning.id;
         document.getElementById('announceBtn').disabled = false;
+        // queue up the next detected winning line, if any
+        const pend = pendingWins.get(val('winDraw'));
+        if (pend) pend.shift();
+        prefillWin();
         return out;
       },
-      (o) => `Winnings confirmed (${money(o.winning.amount_cents)}) — you can announce it below`,
+      (o) => {
+        const remaining = (pendingWins.get(val('winDraw')) || []).length;
+        return `Winnings confirmed (${money(o.winning.amount_cents)})` +
+          (remaining ? ` — ${remaining} more line(s) pre-filled, confirm again` : ' — all lines done. You can announce below');
+      },
       { rerender: false }));
 
     on('announceBtn', () => act('winMsg',

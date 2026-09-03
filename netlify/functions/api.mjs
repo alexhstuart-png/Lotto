@@ -679,13 +679,29 @@ function matchPersonal(ticket) {
   return { matches, hasWinner: winners.length > 0, bestDivision: best, estimate };
 }
 
+/** Persist the auto-computed winnings figure onto the ticket row. */
+async function persistPersonalWinnings(ticket, matching) {
+  const w = matching?.estimate?.totalCents ?? 0;
+  if ((ticket.winnings_cents ?? 0) !== w) {
+    await supabase().from(T('personal_tickets')).update({ winnings_cents: w }).eq('id', ticket.id);
+    ticket.winnings_cents = w;
+  }
+  return ticket;
+}
+
 async function personalList(session) {
   const rows = must(
     await supabase().from(T('personal_tickets')).select('*')
       .eq('owner_id', session.memberId)
       .order('created_at', { ascending: false }).limit(50)
   );
-  return json({ tickets: rows.map((t) => ({ ...t, matching: matchPersonal(t) })) });
+  const tickets = [];
+  for (const t of rows) {
+    const matching = matchPersonal(t);
+    await persistPersonalWinnings(t, matching); // self-heals older tickets too
+    tickets.push({ ...t, matching });
+  }
+  return json({ tickets });
 }
 
 async function personalCreate(session, req) {
@@ -732,7 +748,9 @@ async function personalSetResult(session, req, id) {
       .update({ result, result_date: resultDate })
       .eq('id', ticket.id).select().single()
   );
-  return json({ ticket: { ...updated, matching: matchPersonal(updated) } });
+  const matching = matchPersonal(updated);
+  await persistPersonalWinnings(updated, matching);
+  return json({ ticket: { ...updated, matching } });
 }
 
 async function personalFetchResult(session, id) {
@@ -756,7 +774,9 @@ async function personalFetchResult(session, id) {
         .update({ result, result_date: resultDate })
         .eq('id', ticket.id).select().single()
     );
-    return json({ ticket: { ...updated, matching: matchPersonal(updated) } });
+    const matching = matchPersonal(updated);
+    await persistPersonalWinnings(updated, matching);
+    return json({ ticket: { ...updated, matching } });
   } catch (e) {
     console.error('personal fetch-result failed:', e.message);
     return err(`Couldn't fetch the latest result (${e.message}) — try again shortly or enter it manually`, 400);

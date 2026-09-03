@@ -689,9 +689,11 @@
         : m && m.hasWinner
           ? `<span class="chip winner">Div ${m.bestDivision}!</span>`
           : '<span class="chip results">Checked — no win</span>';
-      const estRow = m && m.hasWinner && m.estimate && m.estimate.totalCents > 0
-        ? `<p style="color:var(--gold);font-weight:700;margin:6px 0 0">💰 Est. winnings: ${money(m.estimate.totalCents)}${m.estimate.allKnown ? '' : '+'} <span style="color:var(--muted);font-weight:400;font-size:12px">(official dividends)</span></p>`
-        : '';
+      const estRow = (t.winnings_cents || 0) > 0
+        ? `<p style="color:var(--gold);font-weight:700;margin:6px 0 0">💰 Winnings: ${money(t.winnings_cents)}${m && m.estimate && !m.estimate.allKnown ? '+' : ''} <span style="color:var(--muted);font-weight:400;font-size:12px">(official dividends)</span></p>`
+        : m && m.hasWinner
+          ? '<p style="color:var(--gold);font-weight:700;margin:6px 0 0">🏆 Winner — dividend not published yet</p>'
+          : '';
       return `<div class="card">
         <div class="list-row" style="border:none;padding:0 0 6px">
           <div>
@@ -711,10 +713,19 @@
       </div>`;
     }).join('');
 
+    const myTotalWinnings = data.tickets.reduce((s, t) => s + (t.winnings_cents || 0), 0);
     app.innerHTML = header() + `
       <div class="card" style="border-color:rgba(233,196,106,0.4)">
-        <h2 style="color:var(--gold)">👑 My Tickets</h2>
-        <p style="color:var(--muted);font-size:13px;margin:0">Your private tracker — only you can see this. No emails, no kitty, just your tickets.</p>
+        <div class="list-row" style="border:none;padding:0">
+          <div>
+            <h2 style="color:var(--gold)">👑 My Tickets</h2>
+            <p style="color:var(--muted);font-size:13px;margin:4px 0 0">Your private tracker — only you can see this.</p>
+          </div>
+          <div style="text-align:right">
+            <div style="color:var(--muted);font-size:10px;letter-spacing:0.14em;text-transform:uppercase">My winnings</div>
+            <div style="font-family:'Anton',sans-serif;font-size:24px;color:var(--gold)">${money(myTotalWinnings)}</div>
+          </div>
+        </div>
       </div>
       <div class="card">
         <h2>Add a ticket</h2>

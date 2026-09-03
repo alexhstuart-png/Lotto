@@ -750,7 +750,7 @@ async function personalFetchResult(session, id) {
     return json({ ticket: { ...updated, matching: matchPersonal(updated) } });
   } catch (e) {
     console.error('personal fetch-result failed:', e.message);
-    return err("Couldn't fetch the latest result — try again shortly or enter it manually", 400);
+    return err(`Couldn't fetch the latest result (${e.message}) — try again shortly or enter it manually`, 400);
   }
 }
 

@@ -75,3 +75,21 @@ test('succeeds on a later attempt', async () => {
   assert.equal(out.attempts, 2);
   assert.deepEqual(out.numbers, [4, 8, 17, 22, 31, 33, 34]);
 });
+
+test('Set for Life parse: finds SetForLife2 product without a filter', async () => {
+  const { parseTheLottSflResponse } = await import('../lib/results-service.mjs');
+  const body = {
+    DrawResults: [
+      { ProductId: 'Powerball', PrimaryNumbers: [1,2,3,4,5,6,7], SecondaryNumbers: [9], DrawDate: '2026-09-03T00:00:00' },
+      { ProductId: 'SetForLife2', DrawNumber: 3210, DrawDate: '2026-09-01T00:00:00',
+        PrimaryNumbers: [3, 9, 14, 21, 30, 38, 44], SecondaryNumbers: [7, 25] },
+    ],
+  };
+  const r = parseTheLottSflResponse(body);
+  assert.equal(r.ok, true);
+  assert.equal(r.drawDate, '2026-09-01');
+  assert.deepEqual(r.numbers, [3, 9, 14, 21, 30, 38, 44]);
+  assert.deepEqual(r.bonus, [7, 25]);
+  // no SFL product at all -> error names what WAS there
+  assert.throws(() => parseTheLottSflResponse({ DrawResults: [{ ProductId: 'OzLotto' }] }), /products: OzLotto/);
+});

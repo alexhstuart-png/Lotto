@@ -735,9 +735,13 @@
       </div>
 
       <div class="admin-section">
-        <h2>Enter Official Results</h2>
+        <h2>Official Results</h2>
         <div class="card">
-          <label>Draw</label>
+          <button class="btn" id="fetchResultsBtn">⚡ Fetch results now (auto)</button>
+          <p style="color:var(--muted);font-size:12px;margin-top:8px">Pulls the official numbers straight from the Lott and lights everything up — tap on draw night once results are posted (usually 30-60 min after the draw). The 3 AM auto-fetch stays as backup.</p>
+        </div>
+        <div class="card">
+          <label>Or enter manually — Draw</label>
           <select id="resultsDraw">${drawOptions}</select>
           <label>7 winning mains + Powerball (space-separated, PB last)</label>
           <input id="resultsNumbers" placeholder="4 8 17 22 31 33 44 7">
@@ -955,6 +959,26 @@
         return api(`/admin/tickets/${saved.ticket_id}/publish`, { method: 'POST' });
       },
       (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, emailed ${o.emailed}`));
+
+    on('fetchResultsBtn', async () => {
+      const btn = document.getElementById('fetchResultsBtn');
+      btn.disabled = true;
+      btn.textContent = 'Fetching…';
+      try {
+        const out = await api('/admin/results/fetch', { method: 'POST' });
+        const messages = {
+          saved: out.hasWinner ? '🏆 WINNER! Results saved and matched' : '✅ Results in — ticket lit up, no winning line',
+          skipped: 'Results were already saved for this draw',
+          no_draw: 'No draw is waiting for results',
+          fetch_failed: "Results aren't up yet (or the source is down) — try again in a few minutes, or enter them manually below",
+          mismatch: `The source's latest draw (${out.scrapedDate || '?'}) doesn't match ours yet — try again shortly`,
+        };
+        alert(messages[out.status] || out.status);
+        if (out.status === 'saved' || out.status === 'skipped') render();
+      } catch (e) { alert(e.message); }
+      btn.disabled = false;
+      btn.textContent = '⚡ Fetch results now (auto)';
+    });
 
     on('resultsBtn', () => act('resultsMsg',
       () => {

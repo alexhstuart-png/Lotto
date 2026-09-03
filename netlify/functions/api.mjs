@@ -25,6 +25,7 @@ import { selectBroadcastAudience } from '../../lib/audience.mjs';
 import { runReminders } from '../../lib/reminders-runner.mjs';
 import { createInviteToken, verifyInviteToken, validatePassword } from '../../lib/invites.mjs';
 import { scanTicketImage } from '../../lib/ticket-scan.mjs';
+import { fetchAndSaveLatestResults } from '../../lib/results-runner.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -522,6 +523,15 @@ async function adminEnterResults(session, req) {
   return json(outcome);
 }
 
+/** Admin: run the results scraper on demand — one tap on draw night. */
+async function adminFetchResults() {
+  // Single attempt so the interactive request stays fast; the admin can tap
+  // again, and the 3 AM cron remains the multi-attempt safety net. A failed
+  // tap never flips the draw to the failed status.
+  const outcome = await fetchAndSaveLatestResults({ maxAttempts: 1, markFailedOnError: false });
+  return json({ ...outcome, draw: outcome.draw ? { draw_date: outcome.draw.draw_date } : null });
+}
+
 async function adminRecordPayment(session, req) {
   const body = await readBody(req);
   const memberId = validateUuid(body.member_id);
@@ -715,6 +725,7 @@ export default async function handler(req) {
       const publishMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)\/publish$/);
       if (publishMatch && method === 'POST') return await adminPublishTicket(session, req, publishMatch[1]);
       if (path === '/api/admin/results' && method === 'POST') return await adminEnterResults(session, req);
+      if (path === '/api/admin/results/fetch' && method === 'POST') return await adminFetchResults();
       if (path === '/api/admin/payments' && method === 'POST') return await adminRecordPayment(session, req);
       if (path === '/api/admin/adjustments' && method === 'POST') return await adminAdjustment(session, req);
       if (path === '/api/admin/winnings' && method === 'POST') return await adminConfirmWinnings(session, req);

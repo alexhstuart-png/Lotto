@@ -1,39 +1,15 @@
 // Scheduled: automatic Powerball results retrieval.
 // Cron "0 19 * * 4" (netlify.toml) = Thursday 19:00 UTC = Friday 03:00
-// Australia/Perth (UTC+8, no daylight saving) — a few hours after the
-// Thursday night draw.
+// Australia/Perth (UTC+8, no daylight saving) — hours after the Thursday
+// night draw, as the safety net behind the admin's on-demand fetch button.
 //
-// Flow: find the most recent draw without results -> fetch official numbers
-// (up to 3 attempts with a delay, one polite request per attempt) -> save via
-// the shared pipeline (unique constraint prevents duplicates; manual entry
-// always wins) which auto-triggers matching and status updates. On total
-// failure: mark the draw "results pending - auto retrieve failed" and email
-// the admin one alert (logged in email_logs). Never crashes.
+// Up to 3 polite attempts; on total failure the draw is marked
+// "results pending - auto retrieve failed" and the admin gets one alert
+// email (logged + deduped via email_logs). Never crashes.
 
 import { supabase, must, T } from '../../lib/db.mjs';
-import { perthDateString } from '../../lib/reminders.mjs';
-import { fetchResultWithRetries } from '../../lib/results-service.mjs';
-import { saveResultsAndProcess } from '../../lib/results-pipeline.mjs';
+import { fetchAndSaveLatestResults } from '../../lib/results-runner.mjs';
 import { sendEmail, adminScrapeFailedEmail } from '../../lib/email.mjs';
-
-async function findDrawAwaitingResults() {
-  // "Today" in the syndicate's timezone (WA — Australia/Perth, UTC+8), not
-  // UTC: draw dates are Perth calendar Thursdays.
-  const today = perthDateString();
-  const draws = must(
-    await supabase().from(T('draws')).select('*')
-      .lte('draw_date', today)
-      .order('draw_date', { ascending: false })
-      .limit(5)
-  );
-  for (const d of draws) {
-    const result = must(
-      await supabase().from(T('results')).select('id').eq('draw_id', d.id).maybeSingle()
-    );
-    if (!result) return d; // most recent past draw with no results yet
-  }
-  return null;
-}
 
 async function alertAdmin(draw, attempts, lastError) {
   // One alert per draw failure: skip if we already logged one for this draw today.
@@ -56,54 +32,15 @@ async function alertAdmin(draw, attempts, lastError) {
 
 export default async function handler() {
   try {
-    const draw = await findDrawAwaitingResults();
-    if (!draw) {
-      console.log('Results cron: no draw awaiting results.');
-      return new Response('ok');
-    }
-
     // 3 attempts, 5s fetch timeout each, 3s between: worst case ~21s, inside
     // Netlify's function execution limit.
-    const outcome = await fetchResultWithRetries({ maxAttempts: 3, delayMs: 3000 });
-
-    if (!outcome.ok) {
-      console.error(`Results retrieval failed for draw ${draw.draw_date}: ${outcome.lastError}`);
-      must(
-        await supabase().from(T('draws')).update({ status: 'results_pending_failed' })
-          .eq('id', draw.id).select().single()
-      );
-      await alertAdmin(draw, outcome.attempts, outcome.lastError);
-      return new Response('ok');
+    const outcome = await fetchAndSaveLatestResults({ maxAttempts: 3, delayMs: 3000, markFailedOnError: true });
+    console.log('Results cron outcome:', JSON.stringify({ ...outcome, draw: outcome.draw?.draw_date }));
+    if (outcome.status === 'fetch_failed') {
+      await alertAdmin(outcome.draw, outcome.attempts, outcome.lastError);
+    } else if (outcome.status === 'mismatch') {
+      await alertAdmin(outcome.draw, 1, `Scraped draw date ${outcome.scrapedDate} does not match our draw ${outcome.draw.draw_date}`);
     }
-
-    // Sanity check: the scraped result must be for our draw's date (or its
-    // official draw number if we know it). A mismatch is treated as a failure
-    // rather than saving wrong numbers against the draw.
-    const dateMatches = outcome.drawDate === draw.draw_date;
-    const numberMatches = draw.draw_number != null && outcome.drawNumber === draw.draw_number;
-    if (!dateMatches && !numberMatches) {
-      const msg = `Scraped draw date ${outcome.drawDate} does not match our draw ${draw.draw_date}`;
-      console.error(msg);
-      must(
-        await supabase().from(T('draws')).update({ status: 'results_pending_failed' })
-          .eq('id', draw.id).select().single()
-      );
-      await alertAdmin(draw, outcome.attempts, msg);
-      return new Response('ok');
-    }
-
-    if (draw.draw_number == null && outcome.drawNumber != null) {
-      await supabase().from(T('draws')).update({ draw_number: outcome.drawNumber }).eq('id', draw.id);
-    }
-
-    const saved = await saveResultsAndProcess({
-      drawId: draw.id,
-      numbers: outcome.numbers,
-      powerball: outcome.powerball,
-      divisions: outcome.divisions,
-      source: 'scraped',
-    });
-    console.log('Results cron outcome:', JSON.stringify(saved));
   } catch (err) {
     // Never crash the scheduled function.
     console.error('Results cron error:', err);

@@ -301,11 +301,16 @@
 
   function winnerCallouts(detail) {
     if (!detail || !detail.matching || !detail.matching.hasWinner) return '';
-    return detail.matching.winners.map((w) => {
+    const estByGame = new Map();
+    if (detail.estimate) for (const l of detail.estimate.lines) estByGame.set(l.gameIndex, l.amountCents);
+    const callouts = detail.matching.winners.map((w) => {
       const confirmed = (detail.winnings || []).find((x) => x.game_index === w.gameIndex);
+      const est = estByGame.get(w.gameIndex);
       const detailTxt = confirmed
         ? `${money(confirmed.amount_cents)}${confirmed.added_to_kitty ? ' — added to kitty' : ''}`
-        : 'Prize amount to be confirmed by admin';
+        : est != null
+          ? `Est. ${money(est)} (official Div ${w.division} dividend)`
+          : 'Prize TBC — dividend not published yet';
       return `<div class="winner-callout">
         <span class="trophy">🏆</span>
         <div>
@@ -314,6 +319,19 @@
         </div>
       </div>`;
     }).join('');
+    // Total across multiple winning lines (estimates only; confirmed amounts speak for themselves)
+    const anyConfirmed = (detail.winnings || []).length > 0;
+    let totalRow = '';
+    if (!anyConfirmed && detail.estimate && detail.estimate.totalCents > 0 && detail.matching.winners.length > 1) {
+      totalRow = `<div class="winner-callout">
+        <span class="trophy">💰</span>
+        <div>
+          <div class="win-title">Estimated total: ${money(detail.estimate.totalCents)}${detail.estimate.allKnown ? '' : '+'}</div>
+          <div class="win-detail">${detail.matching.winners.length} winning lines · from the draw's official dividends (System/PH lines can pay more)</div>
+        </div>
+      </div>`;
+    }
+    return callouts + totalRow;
   }
 
   /** The gold perforated ticket stub with all games. */
@@ -671,6 +689,9 @@
         : m && m.hasWinner
           ? `<span class="chip winner">Div ${m.bestDivision}!</span>`
           : '<span class="chip results">Checked — no win</span>';
+      const estRow = m && m.hasWinner && m.estimate && m.estimate.totalCents > 0
+        ? `<p style="color:var(--gold);font-weight:700;margin:6px 0 0">💰 Est. winnings: ${money(m.estimate.totalCents)}${m.estimate.allKnown ? '' : '+'} <span style="color:var(--muted);font-weight:400;font-size:12px">(official dividends)</span></p>`
+        : '';
       return `<div class="card">
         <div class="list-row" style="border:none;padding:0 0 6px">
           <div>
@@ -680,6 +701,7 @@
           ${statusChipHtml}
         </div>
         ${resultStrip}
+        ${estRow}
         ${lines}
         <div class="pill-btns" style="margin-top:8px">
           <button class="btn small" data-pfetch="${t.id}">⚡ Fetch latest result</button>

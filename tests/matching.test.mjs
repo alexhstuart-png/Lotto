@@ -89,3 +89,30 @@ test('PowerHit: powerball always counts as matched, division reflects it', () =>
   assert.equal(ph2.division, 9);
   assert.equal(ph2.isWinner, true);
 });
+
+test('winnings estimate from official dividends: 2 x Div 9', async () => {
+  const { estimateWinnings } = await import('../lib/winnings-estimate.mjs');
+  const divisions = [
+    { division: 1, blocDividend: 0, blocNumberOfWinners: 0 },
+    { division: 9, blocDividend: 10.6, blocNumberOfWinners: 250000 },
+  ];
+  const est = estimateWinnings(
+    [{ gameIndex: 2, division: 9 }, { gameIndex: 7, division: 9 }],
+    divisions
+  );
+  assert.equal(est.totalCents, 2120); // 2 x $10.60
+  assert.equal(est.allKnown, true);
+  // unknown division (jackpot not declared / missing) -> partial estimate
+  const est2 = estimateWinnings(
+    [{ gameIndex: 1, division: 1 }, { gameIndex: 2, division: 9 }],
+    divisions
+  );
+  assert.equal(est2.totalCents, 1060);
+  assert.equal(est2.allKnown, false);
+  // no dividends at all -> zero known
+  const est3 = estimateWinnings([{ gameIndex: 1, division: 9 }], null);
+  assert.equal(est3.totalCents, 0);
+  assert.equal(est3.allKnown, false);
+  // no winners -> null
+  assert.equal(estimateWinnings([], divisions), null);
+});

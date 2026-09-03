@@ -28,6 +28,7 @@ import { scanTicketImage } from '../../lib/ticket-scan.mjs';
 import { fetchAndSaveLatestResults } from '../../lib/results-runner.mjs';
 import { validateSflGame, validateSflResult, matchSflGame } from '../../lib/setforlife.mjs';
 import { getProvider } from '../../lib/results-service.mjs';
+import { estimateWinnings } from '../../lib/winnings-estimate.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -69,8 +70,11 @@ async function drawDetail(draw) {
   }
   const result = must(await supabase().from(T('results')).select('*').eq('draw_id', draw.id).maybeSingle());
   let matching = null;
+  let estimate = null;
   if (result && games.length > 0) {
     matching = matchTicket(games, { numbers: result.numbers, powerball: result.powerball });
+    // Estimate from the draw's OFFICIAL published dividends (never a guess).
+    if (matching.hasWinner) estimate = estimateWinnings(matching.winners, result.divisions);
   }
   const winnings = must(await supabase().from(T('winnings')).select('*').eq('draw_id', draw.id));
   return {
@@ -85,6 +89,7 @@ async function drawDetail(draw) {
       source: result.source, divisions: result.divisions,
     } : null,
     matching,
+    estimate,
     winnings,
   };
 }
@@ -667,7 +672,8 @@ function matchPersonal(ticket) {
   }));
   const winners = matches.filter((m) => m.isWinner);
   const best = winners.reduce((b, m) => (b === null || m.division < b ? m.division : b), null);
-  return { matches, hasWinner: winners.length > 0, bestDivision: best };
+  const estimate = winners.length > 0 ? estimateWinnings(winners, ticket.result.divisions) : null;
+  return { matches, hasWinner: winners.length > 0, bestDivision: best, estimate };
 }
 
 async function personalList(session) {
@@ -735,11 +741,11 @@ async function personalFetchResult(session, id) {
     let resultDate;
     if (ticket.game_type === 'setforlife') {
       const r = await provider.fetchLatestSetForLifeResult();
-      result = { numbers: r.numbers, bonus: r.bonus };
+      result = { numbers: r.numbers, bonus: r.bonus, divisions: r.divisions ?? null };
       resultDate = r.drawDate;
     } else {
       const r = await provider.fetchLatestPowerballResult();
-      result = { numbers: r.numbers, powerball: r.powerball };
+      result = { numbers: r.numbers, powerball: r.powerball, divisions: r.divisions ?? null };
       resultDate = r.drawDate;
     }
     const updated = must(

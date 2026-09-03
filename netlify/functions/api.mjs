@@ -17,7 +17,7 @@ import {
   validateGame, validateResult, validateEmail, validateName,
   validateCents, validateDate, validateUuid,
 } from '../../lib/validate.mjs';
-import { matchTicket } from '../../lib/matching.mjs';
+import { matchTicket, matchGame } from '../../lib/matching.mjs';
 import { chargeMembersForDraw } from '../../lib/ledger.mjs';
 import { saveResultsAndProcess } from '../../lib/results-pipeline.mjs';
 import { sendEmail, ticketPublishedEmail, announceWinEmail, inviteEmail } from '../../lib/email.mjs';
@@ -26,6 +26,8 @@ import { runReminders } from '../../lib/reminders-runner.mjs';
 import { createInviteToken, verifyInviteToken, validatePassword } from '../../lib/invites.mjs';
 import { scanTicketImage } from '../../lib/ticket-scan.mjs';
 import { fetchAndSaveLatestResults } from '../../lib/results-runner.mjs';
+import { validateSflGame, validateSflResult, matchSflGame } from '../../lib/setforlife.mjs';
+import { getProvider } from '../../lib/results-service.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -407,6 +409,7 @@ async function adminScanTicket(session, req) {
     const result = await scanTicketImage({
       imageBase64: body.image,
       mediaType: typeof body.media_type === 'string' ? body.media_type : '',
+      gameType: body.game_type === 'setforlife' ? 'setforlife' : 'powerball',
     });
     return json(result);
   } catch (e) {
@@ -636,6 +639,129 @@ async function adminAnnounceWin(session, req) {
   return json({ emailed });
 }
 
+// ---------------------------------------------------------------------------
+// Personal tickets (My Tickets tab): admin-only private tracker for the
+// admin's own Powerball / Set for Life entries. No emails, no ledger.
+// ---------------------------------------------------------------------------
+
+function validatePersonalGames(gameType, games) {
+  if (!Array.isArray(games) || games.length < 1 || games.length > 50) return null;
+  const out = [];
+  for (const g of games) {
+    const v = gameType === 'setforlife' ? validateSflGame(g) : validateGame(g);
+    if (!v.ok) return null;
+    out.push(gameType === 'setforlife'
+      ? { numbers: v.numbers }
+      : { numbers: v.numbers, powerball: v.powerball, powerhit: v.powerhit });
+  }
+  return out;
+}
+
+function matchPersonal(ticket) {
+  if (!ticket.result) return null;
+  const matches = ticket.games.map((g, i) => ({
+    gameIndex: i + 1,
+    ...(ticket.game_type === 'setforlife'
+      ? matchSflGame(g, ticket.result)
+      : matchGame(g, ticket.result)),
+  }));
+  const winners = matches.filter((m) => m.isWinner);
+  const best = winners.reduce((b, m) => (b === null || m.division < b ? m.division : b), null);
+  return { matches, hasWinner: winners.length > 0, bestDivision: best };
+}
+
+async function personalList(session) {
+  const rows = must(
+    await supabase().from(T('personal_tickets')).select('*')
+      .eq('owner_id', session.memberId)
+      .order('created_at', { ascending: false }).limit(50)
+  );
+  return json({ tickets: rows.map((t) => ({ ...t, matching: matchPersonal(t) })) });
+}
+
+async function personalCreate(session, req) {
+  const body = await readBody(req);
+  const gameType = body.game_type === 'setforlife' ? 'setforlife' : 'powerball';
+  const games = validatePersonalGames(gameType, body.games);
+  if (!games) return err('Invalid games for that game type');
+  const drawDate = body.draw_date ? validateDate(body.draw_date) : null;
+  const note = typeof body.note === 'string' ? body.note.slice(0, 120) : null;
+  const ticket = must(
+    await supabase().from(T('personal_tickets')).insert({
+      owner_id: session.memberId, game_type: gameType, games, draw_date: drawDate, note,
+    }).select().single()
+  );
+  return json({ ticket: { ...ticket, matching: null } }, 201);
+}
+
+async function personalTicketOwned(session, id) {
+  const tid = validateUuid(id);
+  if (!tid) return null;
+  return must(
+    await supabase().from(T('personal_tickets')).select('*')
+      .eq('id', tid).eq('owner_id', session.memberId).maybeSingle()
+  );
+}
+
+async function personalSetResult(session, req, id) {
+  const ticket = await personalTicketOwned(session, id);
+  if (!ticket) return err('Ticket not found', 404);
+  const body = await readBody(req);
+  let result;
+  if (ticket.game_type === 'setforlife') {
+    const v = validateSflResult({ numbers: body.numbers, bonus: body.bonus });
+    if (!v.ok) return err(v.error);
+    result = { numbers: v.numbers, bonus: v.bonus };
+  } else {
+    const v = validateResult({ numbers: body.numbers, powerball: body.powerball });
+    if (!v.ok) return err(v.error);
+    result = { numbers: v.numbers, powerball: v.powerball };
+  }
+  const resultDate = body.result_date ? validateDate(body.result_date) : null;
+  const updated = must(
+    await supabase().from(T('personal_tickets'))
+      .update({ result, result_date: resultDate })
+      .eq('id', ticket.id).select().single()
+  );
+  return json({ ticket: { ...updated, matching: matchPersonal(updated) } });
+}
+
+async function personalFetchResult(session, id) {
+  const ticket = await personalTicketOwned(session, id);
+  if (!ticket) return err('Ticket not found', 404);
+  const provider = getProvider();
+  try {
+    let result;
+    let resultDate;
+    if (ticket.game_type === 'setforlife') {
+      const r = await provider.fetchLatestSetForLifeResult();
+      result = { numbers: r.numbers, bonus: r.bonus };
+      resultDate = r.drawDate;
+    } else {
+      const r = await provider.fetchLatestPowerballResult();
+      result = { numbers: r.numbers, powerball: r.powerball };
+      resultDate = r.drawDate;
+    }
+    const updated = must(
+      await supabase().from(T('personal_tickets'))
+        .update({ result, result_date: resultDate })
+        .eq('id', ticket.id).select().single()
+    );
+    return json({ ticket: { ...updated, matching: matchPersonal(updated) } });
+  } catch (e) {
+    console.error('personal fetch-result failed:', e.message);
+    return err("Couldn't fetch the latest result — try again shortly or enter it manually", 400);
+  }
+}
+
+async function personalDelete(session, id) {
+  const ticket = await personalTicketOwned(session, id);
+  if (!ticket) return err('Ticket not found', 404);
+  const { error } = await supabase().from(T('personal_tickets')).delete().eq('id', ticket.id);
+  if (error) return err('Could not delete');
+  return json({ ok: true });
+}
+
 async function adminSettings(session, req) {
   if (req.method === 'GET') {
     const s = await getSettings();
@@ -731,6 +857,14 @@ export default async function handler(req) {
       if (path === '/api/admin/winnings' && method === 'POST') return await adminConfirmWinnings(session, req);
       if (path === '/api/admin/winnings/announce' && method === 'POST') return await adminAnnounceWin(session, req);
       if (path === '/api/admin/settings' && (method === 'GET' || method === 'PATCH')) return await adminSettings(session, req);
+      if (path === '/api/admin/personal' && method === 'GET') return await personalList(session);
+      if (path === '/api/admin/personal' && method === 'POST') return await personalCreate(session, req);
+      const pResultMatch = path.match(/^\/api\/admin\/personal\/([^/]+)\/result$/);
+      if (pResultMatch && method === 'POST') return await personalSetResult(session, req, pResultMatch[1]);
+      const pFetchMatch = path.match(/^\/api\/admin\/personal\/([^/]+)\/fetch-result$/);
+      if (pFetchMatch && method === 'POST') return await personalFetchResult(session, pFetchMatch[1]);
+      const pDelMatch = path.match(/^\/api\/admin\/personal\/([^/]+)$/);
+      if (pDelMatch && method === 'DELETE') return await personalDelete(session, pDelMatch[1]);
       if (path === '/api/admin/reminders/run' && method === 'POST') return await adminRunReminders();
     }
 

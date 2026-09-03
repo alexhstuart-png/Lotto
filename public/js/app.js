@@ -367,10 +367,11 @@
         return; // api() already routed to #/login
       }
     }
-    if (name === 'admin' && (!me || me.role !== 'admin')) return route('#/home');
+    if ((name === 'admin' || name === 'mine') && (!me || me.role !== 'admin')) return route('#/home');
 
     nav.classList.toggle('hidden', publicViews.includes(name));
     navAdmin.classList.toggle('hidden', !me || me.role !== 'admin');
+    document.getElementById('navMine').classList.toggle('hidden', !me || me.role !== 'admin');
     nav.querySelectorAll('a').forEach((a) =>
       a.classList.toggle('active', a.dataset.view === name)
     );
@@ -617,6 +618,196 @@
       me = null;
       route('#/login');
     });
+  };
+
+  // ---------- My Tickets (admin's personal tracker) ----------
+
+  // Set for Life line: green = matched winning number, gold = matched bonus.
+  function sflGameLine(game, match, idx) {
+    const won = new Set(match ? match.matchedNumbers : []);
+    const bonus = new Set(match ? match.matchedBonus : []);
+    const balls = game.numbers.map((n) =>
+      `<span class="ball${won.has(n) ? ' matched' : bonus.has(n) ? ' pb matched' : ''}">${n}</span>`
+    ).join('');
+    const count = match
+      ? `<span class="match-count${match.isWinner ? ' hot' : ''}">${match.matchCount}${match.bonusCount ? '+B' : ''}</span>`
+      : '';
+    const sys = game.numbers.length > 7 ? ' sys' : '';
+    return `<div class="game-line${sys}">
+      <span class="gnum">${game.numbers.length > 7 ? 'S' + game.numbers.length : 'G' + idx}</span>${balls}${count}
+    </div>`;
+  }
+
+  function parseSflLine(line) {
+    const nums = line.trim().split(/[\s,:+]+/).filter(Boolean).map(Number);
+    if (nums.some((n) => !Number.isInteger(n))) return null;
+    if (nums.length < 7 || nums.length > 15) return null;
+    return { numbers: nums };
+  }
+
+  views.mine = async () => {
+    const data = await api('/admin/personal');
+
+    const ticketCards = data.tickets.map((t) => {
+      const isSfl = t.game_type === 'setforlife';
+      const m = t.matching;
+      const matchByIdx = new Map();
+      if (m) for (const x of m.matches) matchByIdx.set(x.gameIndex, x);
+      const lines = t.games.map((g, i) =>
+        isSfl
+          ? sflGameLine(g, matchByIdx.get(i + 1) || null, i + 1)
+          : gameLine({ ...g, game_index: i + 1 }, matchByIdx.get(i + 1) || null)
+      ).join('');
+      const resultStrip = t.result ? `
+        <div class="official-strip">
+          <span class="lbl">Result${t.result_date ? ' — ' + esc(fmtDate(t.result_date)) : ''}</span>
+          ${t.result.numbers.map((n) => `<span class="ball">${n}</span>`).join('')}
+          ${isSfl
+            ? t.result.bonus.map((n) => `<span class="ball pb">${n}</span>`).join('')
+            : `<span class="ball pb">${t.result.powerball}</span>`}
+        </div>` : '';
+      const statusChipHtml = !t.result
+        ? '<span class="chip waiting">No result yet</span>'
+        : m && m.hasWinner
+          ? `<span class="chip winner">Div ${m.bestDivision}!</span>`
+          : '<span class="chip results">Checked — no win</span>';
+      return `<div class="card">
+        <div class="list-row" style="border:none;padding:0 0 6px">
+          <div>
+            <div class="primary">${isSfl ? '💠 Set for Life' : '🎱 Powerball'} ${t.note ? '· ' + esc(t.note) : ''}</div>
+            <div class="secondary">${t.draw_date ? esc(fmtDate(t.draw_date)) : ''} · ${t.games.length} game(s)</div>
+          </div>
+          ${statusChipHtml}
+        </div>
+        ${resultStrip}
+        ${lines}
+        <div class="pill-btns" style="margin-top:8px">
+          <button class="btn small" data-pfetch="${t.id}">⚡ Fetch latest result</button>
+          <button class="btn small secondary" data-presult="${t.id}" data-ptype="${t.game_type}">Enter result</button>
+          <button class="btn small danger" data-pdel="${t.id}">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    app.innerHTML = header() + `
+      <div class="card" style="border-color:rgba(233,196,106,0.4)">
+        <h2 style="color:var(--gold)">👑 My Tickets</h2>
+        <p style="color:var(--muted);font-size:13px;margin:0">Your private tracker — only you can see this. No emails, no kitty, just your tickets.</p>
+      </div>
+      <div class="card">
+        <h2>Add a ticket</h2>
+        <label>Game</label>
+        <select id="pType">
+          <option value="powerball">Powerball (7 mains 1-35 + PB, or PH)</option>
+          <option value="setforlife">Set for Life (7 numbers 1-44)</option>
+        </select>
+        <input id="pScanFile" type="file" accept="image/*" capture="environment" multiple style="display:none">
+        <button class="btn secondary" id="pScanBtn" style="margin:6px 0 12px">📷 Scan ticket photo(s)</button>
+        <label>Games — one per line</label>
+        <textarea id="pGames" rows="4" placeholder="1 5 12 22 33 40 44"></textarea>
+        <div class="grid-2">
+          <div><label>Draw date (optional)</label><input id="pDate" type="date"></div>
+          <div><label>Note (optional)</label><input id="pNote" placeholder="Sat ticket"></div>
+        </div>
+        <div class="form-msg" id="pMsg"></div>
+        <button class="btn" id="pSaveBtn">Save ticket</button>
+      </div>
+      ${ticketCards || '<div class="card"><p style="color:var(--muted)">No personal tickets yet — add one above.</p></div>'}`;
+
+    const val = (id) => document.getElementById(id).value;
+    const msg = (id, text, ok) => {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = 'form-msg ' + (ok ? 'ok' : 'error');
+    };
+
+    // Scan photos (append, multi-photo, same flow as the syndicate scanner)
+    const pScanInput = document.getElementById('pScanFile');
+    document.getElementById('pScanBtn').addEventListener('click', () => pScanInput.click());
+    pScanInput.addEventListener('change', async () => {
+      const files = Array.from(pScanInput.files || []);
+      pScanInput.value = '';
+      if (!files.length) return;
+      const gameType = val('pType');
+      const ta = document.getElementById('pGames');
+      let added = 0;
+      try {
+        for (let i = 0; i < files.length; i++) {
+          msg('pMsg', `Reading photo ${i + 1} of ${files.length}…`, true);
+          const img = await createImageBitmap(files[i]);
+          const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+          const out = await api('/admin/tickets/scan', {
+            method: 'POST',
+            body: { image: base64, media_type: 'image/jpeg', game_type: gameType },
+          });
+          const existing = new Set(ta.value.split('\n').map((l) => l.trim()).filter(Boolean));
+          for (const g of out.games) {
+            const line = gameType === 'setforlife' ? g.numbers.join(' ') : gameToLine(g);
+            if (existing.has(line)) continue;
+            existing.add(line);
+            ta.value = ta.value.trim() ? ta.value.trim() + '\n' + line : line;
+            added++;
+          }
+        }
+        msg('pMsg', `Added ${added} game(s) — check the numbers, then Save`, true);
+      } catch (e) { msg('pMsg', e.message, false); }
+    });
+
+    document.getElementById('pSaveBtn').addEventListener('click', async () => {
+      const gameType = val('pType');
+      const lines = val('pGames').split('\n').map((l) => l.trim()).filter(Boolean);
+      const games = lines.map((l) => gameType === 'setforlife' ? parseSflLine(l) : parseGameLine(l));
+      if (!games.length || games.some((g) => g === null)) {
+        msg('pMsg', gameType === 'setforlife'
+          ? 'Each line: 7 numbers 1-44 (8-15 for a system entry)'
+          : 'Each line: 7 mains then the Powerball (or PH)', false);
+        return;
+      }
+      try {
+        await api('/admin/personal', {
+          method: 'POST',
+          body: { game_type: gameType, games, draw_date: val('pDate') || null, note: val('pNote') },
+        });
+        render();
+      } catch (e) { msg('pMsg', e.message, false); }
+    });
+
+    app.querySelectorAll('[data-pfetch]').forEach((btn) => btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.textContent = 'Fetching…';
+      try {
+        await api(`/admin/personal/${btn.dataset.pfetch}/fetch-result`, { method: 'POST' });
+        render();
+      } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = '⚡ Fetch latest result'; }
+    }));
+
+    app.querySelectorAll('[data-presult]').forEach((btn) => btn.addEventListener('click', async () => {
+      const isSfl = btn.dataset.ptype === 'setforlife';
+      const input = prompt(isSfl
+        ? 'Enter the 7 winning numbers then the 2 bonus numbers (9 numbers total):'
+        : 'Enter the 7 winning numbers then the Powerball (8 numbers total):');
+      if (!input) return;
+      const nums = input.trim().split(/[\s,:+]+/).filter(Boolean).map(Number);
+      try {
+        const body = isSfl
+          ? { numbers: nums.slice(0, 7), bonus: nums.slice(7, 9) }
+          : { numbers: nums.slice(0, 7), powerball: nums[7] };
+        await api(`/admin/personal/${btn.dataset.presult}/result`, { method: 'POST', body });
+        render();
+      } catch (e) { alert(e.message); }
+    }));
+
+    app.querySelectorAll('[data-pdel]').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm('Delete this ticket?')) return;
+      try {
+        await api(`/admin/personal/${btn.dataset.pdel}`, { method: 'DELETE' });
+        render();
+      } catch (e) { alert(e.message); }
+    }));
   };
 
   // ---------- admin ----------

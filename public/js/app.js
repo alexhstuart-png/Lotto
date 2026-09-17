@@ -1194,6 +1194,9 @@
         const auto = out.autoRecorded ? ` — ${out.autoRecorded} winning line(s) auto-banked to the kitty 💰` : '';
         const messages = {
           saved: out.hasWinner ? `🏆 WINNER! Results saved and matched${auto}` : '✅ Results in — ticket lit up, no winning line',
+          reprocessed: out.autoRecorded
+            ? `💰 Re-checked${auto}`
+            : out.hasWinner ? '✅ Re-checked — winners already banked, all up to date' : '✅ Re-checked — all up to date',
           skipped: out.reason === 'dividends_backfilled'
             ? `💰 Official dividends added${auto || ' — estimates now showing'}`
             : 'Results were already saved for this draw',

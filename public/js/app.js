@@ -303,8 +303,9 @@
     if (!detail || !detail.matching || !detail.matching.hasWinner) return '';
     const estByGame = new Map();
     if (detail.estimate) for (const l of detail.estimate.lines) estByGame.set(l.gameIndex, l.amountCents);
+    const winnings = detail.winnings || [];
     const callouts = detail.matching.winners.map((w) => {
-      const confirmed = (detail.winnings || []).find((x) => x.game_index === w.gameIndex);
+      const confirmed = winnings.find((x) => x.game_index === w.gameIndex);
       const est = estByGame.get(w.gameIndex);
       const detailTxt = confirmed
         ? `${money(confirmed.amount_cents)}${confirmed.added_to_kitty ? ' — added to kitty' : ''}`
@@ -319,19 +320,38 @@
         </div>
       </div>`;
     }).join('');
-    // Total across multiple winning lines (estimates only; confirmed amounts speak for themselves)
-    const anyConfirmed = (detail.winnings || []).length > 0;
-    let totalRow = '';
-    if (!anyConfirmed && detail.estimate && detail.estimate.totalCents > 0 && detail.matching.winners.length > 1) {
-      totalRow = `<div class="winner-callout">
-        <span class="trophy">💰</span>
-        <div>
-          <div class="win-title">Estimated total: ${money(detail.estimate.totalCents)}${detail.estimate.allKnown ? '' : '+'}</div>
-          <div class="win-detail">${detail.matching.winners.length} winning lines · from the draw's official dividends (System/PH lines can pay more)</div>
-        </div>
+
+    // Headline total for the draw: recorded winnings first, plus official-
+    // dividend estimates for any winning line not yet recorded.
+    const confirmedIdx = new Set(winnings.map((w) => w.game_index));
+    const confirmedCents = winnings.reduce((s, w) => s + w.amount_cents, 0);
+    let pendingEstCents = 0;
+    let pendingUnknown = false;
+    for (const w of detail.matching.winners) {
+      if (confirmedIdx.has(w.gameIndex)) continue;
+      const est = estByGame.get(w.gameIndex);
+      if (est != null) pendingEstCents += est;
+      else pendingUnknown = true;
+    }
+    const totalCents = confirmedCents + pendingEstCents;
+    const lineCount = detail.matching.winners.length;
+    let banner = '';
+    if (totalCents > 0 || pendingUnknown) {
+      const isEstimate = confirmedCents === 0;
+      const sub = confirmedCents > 0
+        ? `${lineCount} winning line${lineCount > 1 ? 's' : ''} · ${money(confirmedCents)} banked to the kitty` +
+          (pendingEstCents > 0 ? ` · ${money(pendingEstCents)} est. pending` : '') +
+          (pendingUnknown ? ' · more TBC' : '')
+        : totalCents > 0
+          ? `${lineCount} winning line${lineCount > 1 ? 's' : ''} · from the draw's official dividends${pendingUnknown ? ' · more TBC' : ''}`
+          : `${lineCount} winning line${lineCount > 1 ? 's' : ''} · dividends not published yet`;
+      banner = `<div class="win-banner">
+        <div class="win-banner-label">${isEstimate ? 'Estimated win' : 'We won'}</div>
+        <div class="win-banner-amount">${totalCents > 0 ? money(totalCents) + (pendingUnknown ? '+' : '') : 'TBC'}</div>
+        <div class="win-banner-sub">${esc(sub)}</div>
       </div>`;
     }
-    return callouts + totalRow;
+    return banner + callouts;
   }
 
   /** The gold perforated ticket stub with all games. */

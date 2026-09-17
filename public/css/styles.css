@@ -204,6 +204,33 @@ body {
 .winner-callout .win-title { font-family: 'Anton', sans-serif; color: var(--gold); font-size: 17px; letter-spacing: 0.06em; }
 .winner-callout .win-detail { color: var(--text); font-size: 13px; margin-top: 2px; }
 
+/* Big draw-total banner shown above the line callouts */
+.win-banner {
+  background: linear-gradient(160deg, rgba(233, 196, 106, 0.28), rgba(233, 196, 106, 0.08));
+  border: 1px solid var(--gold);
+  border-radius: var(--radius);
+  padding: 18px 16px 16px;
+  margin-bottom: 14px;
+  text-align: center;
+  box-shadow: 0 0 24px rgba(233, 196, 106, 0.18);
+}
+.win-banner-label {
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.win-banner-amount {
+  font-family: 'Anton', sans-serif;
+  color: var(--gold);
+  font-size: 44px;
+  line-height: 1.1;
+  margin: 4px 0 2px;
+  text-shadow: 0 0 18px rgba(233, 196, 106, 0.35);
+}
+.win-banner-sub { color: var(--text); font-size: 13px; }
+
 /* ---------- status chips ---------- */
 .chip {
   display: inline-block;

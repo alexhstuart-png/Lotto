@@ -465,18 +465,31 @@ async function adminPublishTicket(session, req, ticketId) {
     );
   }
 
-  // Kitty pays for the ticket — also exactly once per draw.
+  // Kitty settles the ticket — exactly once per draw. The weekly $25-a-head
+  // charges cover the ticket first; only the DIFFERENCE moves the kitty:
+  // spend more than the charges and the extra comes off the kitty, spend
+  // less and the change goes into it.
   const existingCost = must(
     await supabase().from(T('kitty_transactions')).select('id')
       .eq('draw_id', draw.id).eq('type', 'ticket_cost')
   );
   if (existingCost.length === 0 && ticket.cost_cents > 0) {
-    must(
-      await supabase().from(T('kitty_transactions')).insert({
-        type: 'ticket_cost', amount_cents: -ticket.cost_cents, draw_id: draw.id,
-        note: `Powerball ticket ${draw.draw_date}`, created_by: session.memberId,
-      }).select().single()
+    const chargeRows = must(
+      await supabase().from(T('transactions')).select('amount_cents')
+        .eq('draw_id', draw.id).eq('type', 'weekly_charge')
     );
+    const collectedCents = chargeRows.reduce((s, r) => s + Math.abs(r.amount_cents), 0);
+    const netCents = collectedCents - ticket.cost_cents;
+    if (netCents !== 0) {
+      const money = (c) => `$${(c / 100).toFixed(2)}`;
+      must(
+        await supabase().from(T('kitty_transactions')).insert({
+          type: 'ticket_cost', amount_cents: netCents, draw_id: draw.id,
+          note: `Powerball ticket ${draw.draw_date}: ${money(ticket.cost_cents)} ticket vs ${money(collectedCents)} member charges`,
+          created_by: session.memberId,
+        }).select().single()
+      );
+    }
   }
 
   // Email every active member with notifications enabled — first publish only.
@@ -548,15 +561,12 @@ async function adminRecordPayment(session, req) {
   const note = typeof body.note === 'string' ? body.note.slice(0, 200) : 'Payment received';
   const member = must(await supabase().from(T('members')).select('id, name').eq('id', memberId).maybeSingle());
   if (!member) return err('Member not found', 404);
-  // Payment credits the member's ledger AND lands in the kitty.
+  // Payment credits the member's prepaid balance only. It is NOT kitty
+  // money — the kitty is the surplus pot (winnings + ticket change), while
+  // prepaid cash is tracked per member and drawn down $25 a week.
   must(
     await supabase().from(T('transactions')).insert({
       member_id: memberId, type: 'payment', amount_cents: amount, note, created_by: session.memberId,
-    }).select().single()
-  );
-  must(
-    await supabase().from(T('kitty_transactions')).insert({
-      type: 'member_payment', amount_cents: amount, member_id: memberId, note, created_by: session.memberId,
     }).select().single()
   );
   return json({ ok: true });

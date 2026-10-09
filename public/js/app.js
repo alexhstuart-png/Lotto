@@ -1002,7 +1002,7 @@
           <label>Amount ($)</label><input id="payAmount" type="number" step="0.01" min="0">
           <label>Note</label><input id="payNote" placeholder="Bank transfer">
           <div class="form-msg" id="payMsg"></div>
-          <button class="btn secondary" id="payBtn">Record payment (credits member + kitty)</button>
+          <button class="btn secondary" id="payBtn">Record payment (credits member balance)</button>
         </div>
       </div>
 

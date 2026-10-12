@@ -539,6 +539,7 @@
               <div class="mb-balance">${moneyShort(m.balance_cents)}</div>
             </div>`).join('')}
         </div>
+        <div class="member-total">Everyone's money in = <strong>${money(data.members.reduce((s, m) => s + m.balance_cents, 0))}</strong></div>
       </div>` : ''}
       ${d ? `
         <div class="card">

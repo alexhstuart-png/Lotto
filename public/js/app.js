@@ -546,11 +546,7 @@
           ${officialStrip(d.result)}
         </div>
         ${ticketStub(d)}
-      ` : `<div class="card"><p style="color:var(--muted)">No draws yet.</p></div>`}
-      <div class="stat">
-        <div class="label">Total syndicate winnings</div>
-        <div class="value">${money(data.total_winnings_cents)}</div>
-      </div>`;
+      ` : `<div class="card"><p style="color:var(--muted)">No draws yet.</p></div>`}`;
   };
 
   views.ticket = async () => {

@@ -561,6 +561,14 @@ async function adminRecordPayment(session, req) {
   const note = typeof body.note === 'string' ? body.note.slice(0, 200) : 'Payment received';
   const member = must(await supabase().from(T('members')).select('id, name').eq('id', memberId).maybeSingle());
   if (!member) return err('Member not found', 404);
+  // Double-submit guard: an identical payment for the same member within the
+  // last 15 seconds is a double-tap/retry, not a second payment — skip it.
+  const recent = must(
+    await supabase().from(T('transactions')).select('id')
+      .eq('member_id', memberId).eq('type', 'payment').eq('amount_cents', amount)
+      .gte('created_at', new Date(Date.now() - 15000).toISOString())
+  );
+  if (recent.length > 0) return json({ ok: true, deduped: true });
   // Payment credits the member's prepaid balance only. It is NOT kitty
   // money — the kitty is the surplus pot (winnings + ticket change), while
   // prepaid cash is tracked per member and drawn down $25 a week.

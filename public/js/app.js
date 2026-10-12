@@ -1059,7 +1059,14 @@
       </div>`;
 
     // ----- wire up admin actions -----
-    const on = (id, fn) => document.getElementById(id).addEventListener('click', fn);
+    // Buttons lock while their action runs — a double-tap can never fire the
+    // same request (and e.g. record a payment) twice.
+    const on = (id, fn) => document.getElementById(id).addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try { await fn(e); } finally { btn.disabled = false; }
+    });
     const val = (id) => document.getElementById(id).value;
     const msg = (id, text, ok) => {
       const el = document.getElementById(id);

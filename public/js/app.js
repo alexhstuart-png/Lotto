@@ -11,6 +11,15 @@
 
   let me = null; // { id, name, email, role, notifications_enabled }
 
+  // Admin screen sections are collapsed by default (long page on a phone);
+  // which ones you have open is remembered on this device.
+  const ADMIN_OPEN_KEY = 'lotto.adminOpen';
+  const adminOpen = new Set();
+  try { JSON.parse(localStorage.getItem(ADMIN_OPEN_KEY) || '[]').forEach((k) => adminOpen.add(k)); } catch { /* ignore */ }
+  const rememberAdminOpen = () => {
+    try { localStorage.setItem(ADMIN_OPEN_KEY, JSON.stringify([...adminOpen])); } catch { /* ignore */ }
+  };
+
   // ---------- utilities ----------
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -965,11 +974,34 @@
         <span class="amount ${t.amount_cents < 0 ? 'owing' : 'credit'}">${money(t.amount_cents)}</span>
       </div>`).join('');
 
+    // One-line summary per section so the collapsed list still tells you
+    // where attention is needed.
+    const owingCount = data.members.filter((m) => m.is_active && m.balance_cents < 0).length;
+    const linesNeedingAmount = draws.reduce((n, d) => {
+      if (!d.matching || !d.matching.hasWinner) return n;
+      const done = new Set((d.winnings || []).map((w) => w.game_index));
+      return n + d.matching.winners.filter((w) => !done.has(w.gameIndex)).length;
+    }, 0);
+    const sub = {
+      members: `${data.members.filter((m) => m.is_active).length} active`,
+      ticket: activeDraw ? `${fmtDate(activeDraw.draw.draw_date)} · ${(STATUS_LABELS[activeDraw.draw.status] || [activeDraw.draw.status])[0]}` : 'No draws yet',
+      results: activeDraw ? (activeDraw.result ? 'Latest draw entered' : '⚠️ Latest draw needs numbers') : '',
+      payments: owingCount ? `${owingCount} owing` : 'Everyone paid up',
+      winnings: linesNeedingAmount ? `⚠️ ${linesNeedingAmount} line(s) need an amount` : 'All lines banked',
+      settings: `${money(data.settings.weekly_charge_cents)} / week`,
+      kitty: `${money(data.kitty_cents)}`,
+      email: data.email_logs.length ? `last ${new Date(data.email_logs[0].sent_at).toLocaleDateString('en-AU')}` : 'none yet',
+    };
+    const section = (key, title, body) => `
+      <details class="admin-section" data-section="${key}"${adminOpen.has(key) ? ' open' : ''}>
+        <summary><span class="title">${title}</span><span class="sub">${esc(sub[key] || '')}</span></summary>
+        <div class="admin-body">${body}</div>
+      </details>`;
+
     app.innerHTML = header() + `
       <div class="stat"><div class="label">Kitty</div><div class="value">${money(data.kitty_cents)}</div></div>
 
-      <div class="admin-section">
-        <h2>Members</h2>
+${section('members', 'Members', `
         <div class="card">${memberRows}</div>
         <div class="card">
           <h2>Add member</h2>
@@ -978,10 +1010,8 @@
           <div class="form-msg" id="nmMsg"></div>
           <button class="btn secondary" id="nmBtn">Add member</button>
         </div>
-      </div>
-
-      <div class="admin-section">
-        <h2>Draw &amp; Ticket</h2>
+      `)}
+${section('ticket', 'Draw &amp; Ticket', `
         <div class="card">
           <label>New draw date (a Thursday)</label>
           <input id="ndDate" type="date">
@@ -1005,10 +1035,8 @@
           </div>
           <p style="color:var(--muted);font-size:12px">Publishing charges each active member ${money(data.settings.weekly_charge_cents)} once — re-publishing never double-charges.</p>
         </div>
-      </div>
-
-      <div class="admin-section">
-        <h2>Official Results</h2>
+      `)}
+${section('results', 'Official Results', `
         <div class="card">
           <label>Draw</label>
           <select id="resultsDraw">${drawOptions}</select>
@@ -1020,10 +1048,8 @@
           <button class="btn" id="resultsBtn">Save results — matching runs automatically</button>
           <p style="color:var(--muted);font-size:12px">Type in the winning numbers from the Lott after the draw. Saving triggers matching, highlighting, win detection and draw status in one action — saving again overwrites and recomputes. For every division you hit you'll be asked for that week's prize per line, and each line is banked to the kitty.</p>
         </div>
-      </div>
-
-      <div class="admin-section">
-        <h2>Payments</h2>
+      `)}
+${section('payments', 'Payments', `
         <div class="card">
           <label>Member</label><select id="payMember">${memberOptions}</select>
           <label>Amount ($)</label><input id="payAmount" type="number" step="0.01" min="0">
@@ -1031,10 +1057,8 @@
           <div class="form-msg" id="payMsg"></div>
           <button class="btn secondary" id="payBtn">Record payment (credits member balance)</button>
         </div>
-      </div>
-
-      <div class="admin-section">
-        <h2>Confirm Winnings</h2>
+      `)}
+${section('winnings', 'Confirm Winnings', `
         <div class="card">
           <label>Draw</label><select id="winDraw">${drawOptions}</select>
           <div class="form-msg ok" id="winHint"></div>
@@ -1055,10 +1079,8 @@
           </div>
           <p style="color:var(--muted);font-size:12px">Prize amounts are never guessed — enter the amount from the Lott's results page. "Enter amounts for hit lines" asks once per division for the selected draw and banks every line.</p>
         </div>
-      </div>
-
-      <div class="admin-section">
-        <h2>Settings</h2>
+      `)}
+${section('settings', 'Settings', `
         <div class="card">
           <label>Weekly charge ($)</label>
           <input id="setWeekly" type="number" step="0.01" min="0" value="${(data.settings.weekly_charge_cents / 100).toFixed(2)}">
@@ -1074,17 +1096,20 @@
             <button class="btn small secondary" id="remindersBtn">Run Friday reminders now</button>
           </div>
         </div>
-      </div>
-
-      <div class="admin-section">
-        <h2>Kitty ledger</h2>
+      `)}
+${section('kitty', 'Kitty ledger', `
         <div class="card">${kittyRows || '<p style="color:var(--muted)">Empty.</p>'}</div>
-      </div>
-
-      <div class="admin-section">
-        <h2>Email log</h2>
+      `)}
+${section('email', 'Email log', `
         <div class="card">${emailRows || '<p style="color:var(--muted)">No emails sent yet.</p>'}</div>
-      </div>`;
+      `)}`;
+
+    app.querySelectorAll('details.admin-section').forEach((el) => {
+      el.addEventListener('toggle', () => {
+        if (el.open) adminOpen.add(el.dataset.section); else adminOpen.delete(el.dataset.section);
+        rememberAdminOpen();
+      });
+    });
 
     // ----- wire up admin actions -----
     // Buttons lock while their action runs — a double-tap can never fire the

@@ -267,6 +267,19 @@
     winner: ['Winner!', 'winner'],
   };
 
+  // What each Powerball division needs — shown when asking for prize amounts.
+  const DIVISION_RULES = {
+    1: '7 winning numbers + Powerball',
+    2: '7 winning numbers',
+    3: '6 winning numbers + Powerball',
+    4: '6 winning numbers',
+    5: '5 winning numbers + Powerball',
+    6: '4 winning numbers + Powerball',
+    7: '5 winning numbers',
+    8: '3 winning numbers + Powerball',
+    9: '2 winning numbers + Powerball',
+  };
+
   const statusChip = (status) => {
     const [label, cls] = STATUS_LABELS[status] || [status, ''];
     return `<span class="chip ${cls}">${esc(label)}</span>`;
@@ -1001,11 +1014,11 @@
           <select id="resultsDraw">${drawOptions}</select>
           <label>7 winning mains + Powerball (space-separated, PB last)</label>
           <input id="resultsNumbers" placeholder="4 8 17 22 31 33 44 7">
-          <label>Dividends (optional) — paste the Division list from the Lott's results page</label>
+          <label>Dividends (optional shortcut) — paste the Division list from the Lott's results page, or leave blank and you'll be asked for the amount of each division you hit</label>
           <textarea id="resultsDividends" rows="4" placeholder="Division 1&#10;$0.00&#10;7 winning numbers and Powerball&#10;…&#10;Division 9&#10;$14.10"></textarea>
           <div class="form-msg" id="resultsMsg"></div>
           <button class="btn" id="resultsBtn">Save results — matching runs automatically</button>
-          <p style="color:var(--muted);font-size:12px">Type in the winning numbers from the Lott after the draw. Saving triggers matching, highlighting, win detection and draw status in one action — saving again overwrites and recomputes. With dividends pasted, every winning line is banked to the kitty at its official amount; without them, confirm each line under Winnings.</p>
+          <p style="color:var(--muted);font-size:12px">Type in the winning numbers from the Lott after the draw. Saving triggers matching, highlighting, win detection and draw status in one action — saving again overwrites and recomputes. For every division you hit you'll be asked for that week's prize per line, and each line is banked to the kitty.</p>
         </div>
       </div>
 
@@ -1037,9 +1050,10 @@
           <div class="form-msg" id="winMsg"></div>
           <div class="pill-btns">
             <button class="btn small" id="winBtn">Confirm winnings</button>
+            <button class="btn small secondary" id="winPromptBtn">💰 Enter amounts for hit lines</button>
             <button class="btn small secondary" id="announceBtn" disabled>Announce win to members</button>
           </div>
-          <p style="color:var(--muted);font-size:12px">Prize amounts are never guessed — enter the amount from the official ticket check.</p>
+          <p style="color:var(--muted);font-size:12px">Prize amounts are never guessed — enter the amount from the Lott's results page. "Enter amounts for hit lines" asks once per division for the selected draw and banks every line.</p>
         </div>
       </div>
 
@@ -1088,6 +1102,50 @@
       el.className = 'form-msg ' + (ok ? 'ok' : 'error');
     };
     const dollars = (id) => Math.round(parseFloat(val(id) || '0') * 100);
+
+    /**
+     * Ask for the prize amount of every winning line that doesn't have one
+     * yet — one prompt per division (every line in a division pays the
+     * same), then record each line and bank it to the kitty. Cancel skips
+     * that division; it stays pre-filled under Confirm Winnings.
+     * @param {{id:string, draw_date:string}} draw
+     * @param {{gameIndex:number, division:number}[]} lines  unconfirmed winners
+     */
+    const promptWinnings = async (draw, lines) => {
+      const byDiv = new Map();
+      for (const l of lines) {
+        if (!byDiv.has(l.division)) byDiv.set(l.division, []);
+        byDiv.get(l.division).push(l.gameIndex);
+      }
+      let banked = 0;
+      let totalCents = 0;
+      const skipped = [];
+      for (const division of [...byDiv.keys()].sort((a, b) => a - b)) {
+        const games = byDiv.get(division).sort((a, b) => a - b);
+        let amountCents = null;
+        while (amountCents === null) {
+          const answer = prompt(
+            `🏆 Division ${division} — ${DIVISION_RULES[division] || ''}\n` +
+            `Draw ${fmtDate(draw.draw_date)} · hit on ${games.length} line${games.length > 1 ? 's' : ''} (game${games.length > 1 ? 's' : ''} ${games.join(', ')})\n\n` +
+            `Enter the Division ${division} prize PER LINE ($) from the Lott's results page. Cancel to skip for now.`
+          );
+          if (answer === null) break;
+          const parsed = Math.round(parseFloat(String(answer).replace(/[$,\s]/g, '')) * 100);
+          if (Number.isFinite(parsed) && parsed > 0) amountCents = parsed;
+          else alert('Enter a dollar amount above zero, e.g. 14.10');
+        }
+        if (amountCents === null) { skipped.push(...games); continue; }
+        for (const gameIndex of games) {
+          await api('/admin/winnings', {
+            method: 'POST',
+            body: { draw_id: draw.id, division, game_index: gameIndex, amount_cents: amountCents, add_to_kitty: true },
+          });
+          banked++;
+          totalCents += amountCents;
+        }
+      }
+      return { banked, totalCents, skipped };
+    };
     const act = async (msgId, fn, okText, { rerender = true } = {}) => {
       try {
         const out = await fn();
@@ -1243,21 +1301,30 @@
       (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, emailed ${o.emailed}`));
 
     on('resultsBtn', () => act('resultsMsg',
-      () => {
+      async () => {
         const parsed = parseGameLine(val('resultsNumbers'), { exactMains: 7 });
         if (!parsed) throw new Error('Enter exactly 8 numbers: 7 mains then the Powerball');
         const divisions = parseDividends(val('resultsDividends'));
         if (divisions === null) throw new Error('Could not read the dividends — paste the "Division 1 … $amount" list as shown on the Lott, or leave it blank');
-        return api('/admin/results', {
+        const drawId = val('resultsDraw');
+        const out = await api('/admin/results', {
           method: 'POST',
-          body: { draw_id: val('resultsDraw'), numbers: parsed.numbers, powerball: parsed.powerball, divisions },
+          body: { draw_id: drawId, numbers: parsed.numbers, powerball: parsed.powerball, divisions },
         });
+        // Any winning line without an amount yet: ask now, per division.
+        const confirmed = new Set(out.confirmedGames || []);
+        const unconfirmed = (out.winners || []).filter((w) => !confirmed.has(w.gameIndex));
+        const d = draws.find((x) => x.draw.id === drawId);
+        out.prompted = unconfirmed.length && d ? await promptWinnings(d.draw, unconfirmed) : null;
+        return out;
       },
       (o) => {
-        const banked = o.autoRecorded ? ` — ${o.autoRecorded} winning line(s) banked to the kitty at the official dividend 💰` : '';
-        return o.hasWinner
-          ? `🏆 WINNER detected — matching done${banked || ' (no dividends pasted — confirm each line under Winnings)'}`
-          : 'Results saved — matching done, no winning line';
+        if (!o.hasWinner) return 'Results saved — matching done, no winning line';
+        const parts = [];
+        if (o.autoRecorded) parts.push(`${o.autoRecorded} line(s) banked at the official dividend`);
+        if (o.prompted && o.prompted.banked) parts.push(`${o.prompted.banked} line(s) banked, ${money(o.prompted.totalCents)} to the kitty`);
+        if (o.prompted && o.prompted.skipped.length) parts.push(`game ${o.prompted.skipped.join(', ')} still need an amount — see Confirm Winnings`);
+        return `🏆 WINNER — ${(o.winners || []).length} winning line(s)${parts.length ? ' 💰 ' + parts.join(' · ') : ''}`;
       }));
 
     on('payBtn', () => act('payMsg',
@@ -1321,6 +1388,21 @@
           (remaining ? ` — ${remaining} more line(s) pre-filled, confirm again` : ' — all lines done. You can announce below');
       },
       { rerender: false }));
+
+    on('winPromptBtn', () => act('winMsg',
+      async () => {
+        const drawId = val('winDraw');
+        const pend = pendingWins.get(drawId) || [];
+        const d = draws.find((x) => x.draw.id === drawId);
+        if (!pend.length || !d) throw new Error('No winning lines are waiting for an amount on that draw');
+        const out = await promptWinnings(d.draw, pend);
+        pendingWins.set(drawId, pend.filter((p) => out.skipped.includes(p.gameIndex)));
+        prefillWin();
+        return out;
+      },
+      (o) => o.banked
+        ? `Banked ${o.banked} line(s) — ${money(o.totalCents)} to the kitty${o.skipped.length ? ` · game ${o.skipped.join(', ')} skipped` : ''}`
+        : 'Nothing banked — all lines skipped'));
 
     on('announceBtn', () => act('winMsg',
       () => api('/admin/winnings/announce', { method: 'POST', body: { winning_id: lastWinningId } }),

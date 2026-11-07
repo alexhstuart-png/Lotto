@@ -25,9 +25,7 @@ import { selectBroadcastAudience } from '../../lib/audience.mjs';
 import { runReminders } from '../../lib/reminders-runner.mjs';
 import { createInviteToken, verifyInviteToken, validatePassword } from '../../lib/invites.mjs';
 import { scanTicketImage } from '../../lib/ticket-scan.mjs';
-import { fetchAndSaveLatestResults } from '../../lib/results-runner.mjs';
 import { validateSflGame, validateSflResult, matchSflGame } from '../../lib/setforlife.mjs';
-import { getProvider } from '../../lib/results-service.mjs';
 import { estimateWinnings } from '../../lib/winnings-estimate.mjs';
 
 export const config = { path: '/api/*' };
@@ -332,6 +330,14 @@ async function adminUpdateMember(session, req, memberId) {
     if (typeof body.notifications_enabled !== 'boolean') return err('notifications_enabled must be boolean');
     patch.notifications_enabled = body.notifications_enabled;
   }
+  if (body.role !== undefined) {
+    // Admins can hand the Admin screen to another member (e.g. someone
+    // running the syndicate for a while) and take it back later. You can
+    // never demote yourself, so there is always at least one admin left.
+    if (!['member', 'admin'].includes(body.role)) return err('role must be member or admin');
+    if (body.role !== 'admin' && id === session.memberId) return err("You can't remove your own admin access");
+    patch.role = body.role;
+  }
   if (Object.keys(patch).length === 0) return err('Nothing to update');
   const { data, error } = await supabase().from(T('members')).update(patch).eq('id', id).select().single();
   if (error) return err('Could not update member');
@@ -539,18 +545,9 @@ async function adminEnterResults(session, req) {
   }
   const outcome = await saveResultsAndProcess({
     drawId, numbers: v.numbers, powerball: v.powerball, divisions,
-    source: 'manual', actorId: session.memberId,
+    actorId: session.memberId,
   });
   return json(outcome);
-}
-
-/** Admin: run the results scraper on demand — one tap on draw night. */
-async function adminFetchResults() {
-  // Single attempt so the interactive request stays fast; the admin can tap
-  // again, and the 3 AM cron remains the multi-attempt safety net. A failed
-  // tap never flips the draw to the failed status.
-  const outcome = await fetchAndSaveLatestResults({ maxAttempts: 1, markFailedOnError: false });
-  return json({ ...outcome, draw: outcome.draw ? { draw_date: outcome.draw.draw_date } : null });
 }
 
 async function adminRecordPayment(session, req) {
@@ -771,36 +768,6 @@ async function personalSetResult(session, req, id) {
   return json({ ticket: { ...updated, matching } });
 }
 
-async function personalFetchResult(session, id) {
-  const ticket = await personalTicketOwned(session, id);
-  if (!ticket) return err('Ticket not found', 404);
-  const provider = getProvider();
-  try {
-    let result;
-    let resultDate;
-    if (ticket.game_type === 'setforlife') {
-      const r = await provider.fetchLatestSetForLifeResult();
-      result = { numbers: r.numbers, bonus: r.bonus, divisions: r.divisions ?? null };
-      resultDate = r.drawDate;
-    } else {
-      const r = await provider.fetchLatestPowerballResult();
-      result = { numbers: r.numbers, powerball: r.powerball, divisions: r.divisions ?? null };
-      resultDate = r.drawDate;
-    }
-    const updated = must(
-      await supabase().from(T('personal_tickets'))
-        .update({ result, result_date: resultDate })
-        .eq('id', ticket.id).select().single()
-    );
-    const matching = matchPersonal(updated);
-    await persistPersonalWinnings(updated, matching);
-    return json({ ticket: { ...updated, matching } });
-  } catch (e) {
-    console.error('personal fetch-result failed:', e.message);
-    return err(`Couldn't fetch the latest result (${e.message}) — try again shortly or enter it manually`, 400);
-  }
-}
-
 async function personalDelete(session, id) {
   const ticket = await personalTicketOwned(session, id);
   if (!ticket) return err('Ticket not found', 404);
@@ -898,7 +865,6 @@ export default async function handler(req) {
       const publishMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)\/publish$/);
       if (publishMatch && method === 'POST') return await adminPublishTicket(session, req, publishMatch[1]);
       if (path === '/api/admin/results' && method === 'POST') return await adminEnterResults(session, req);
-      if (path === '/api/admin/results/fetch' && method === 'POST') return await adminFetchResults();
       if (path === '/api/admin/payments' && method === 'POST') return await adminRecordPayment(session, req);
       if (path === '/api/admin/adjustments' && method === 'POST') return await adminAdjustment(session, req);
       if (path === '/api/admin/winnings' && method === 'POST') return await adminConfirmWinnings(session, req);
@@ -908,8 +874,6 @@ export default async function handler(req) {
       if (path === '/api/admin/personal' && method === 'POST') return await personalCreate(session, req);
       const pResultMatch = path.match(/^\/api\/admin\/personal\/([^/]+)\/result$/);
       if (pResultMatch && method === 'POST') return await personalSetResult(session, req, pResultMatch[1]);
-      const pFetchMatch = path.match(/^\/api\/admin\/personal\/([^/]+)\/fetch-result$/);
-      if (pFetchMatch && method === 'POST') return await personalFetchResult(session, pFetchMatch[1]);
       const pDelMatch = path.match(/^\/api\/admin\/personal\/([^/]+)$/);
       if (pDelMatch && method === 'DELETE') return await personalDelete(session, pDelMatch[1]);
       if (path === '/api/admin/reminders/run' && method === 'POST') return await adminRunReminders();

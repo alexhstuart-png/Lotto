@@ -261,7 +261,7 @@
   const STATUS_LABELS = {
     upcoming: ['Upcoming', 'draft'],
     waiting_results: ['Waiting for Results', 'waiting'],
-    results_pending_failed: ['Results pending — auto retrieve failed', 'failed'],
+    results_pending_failed: ['Results pending', 'failed'],
     results_available: ['Results Available', 'results'],
     checked: ['Checked', 'results'],
     winner: ['Winner!', 'winner'],
@@ -560,7 +560,7 @@
     app.innerHTML = header() + `
       <div class="card">
         <h2>${esc(fmtDate(d.draw.draw_date))} <span style="float:right">${statusChip(d.draw.status)}</span></h2>
-        ${d.result ? officialStrip(d.result) : '<p style="color:var(--muted);margin:0">Results land Friday morning — numbers will light up automatically.</p>'}
+        ${d.result ? officialStrip(d.result) : '<p style="color:var(--muted);margin:0">Results go up once the admin enters the winning numbers after the draw — your balls light up automatically.</p>'}
       </div>
       ${ticketStub(d)}
       ${d.ticket && d.ticket.published_at ? `<p style="color:var(--muted);font-size:12px;text-align:center">Published ${new Date(d.ticket.published_at).toLocaleString('en-AU')}</p>` : ''}`;
@@ -723,8 +723,7 @@
         ${estRow}
         ${lines}
         <div class="pill-btns" style="margin-top:8px">
-          <button class="btn small" data-pfetch="${t.id}">⚡ Fetch latest result</button>
-          <button class="btn small secondary" data-presult="${t.id}" data-ptype="${t.game_type}">Enter result</button>
+          <button class="btn small" data-presult="${t.id}" data-ptype="${t.game_type}">Enter result</button>
           <button class="btn small danger" data-pdel="${t.id}">Delete</button>
         </div>
       </div>`;
@@ -827,14 +826,6 @@
       } catch (e) { msg('pMsg', e.message, false); }
     });
 
-    app.querySelectorAll('[data-pfetch]').forEach((btn) => btn.addEventListener('click', async () => {
-      btn.disabled = true; btn.textContent = 'Fetching…';
-      try {
-        await api(`/admin/personal/${btn.dataset.pfetch}/fetch-result`, { method: 'POST' });
-        render();
-      } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = '⚡ Fetch latest result'; }
-    }));
-
     app.querySelectorAll('[data-presult]').forEach((btn) => btn.addEventListener('click', async () => {
       const isSfl = btn.dataset.ptype === 'setforlife';
       const input = prompt(isSfl
@@ -903,6 +894,7 @@
           <span class="amount ${m.balance_cents < 0 ? 'owing' : 'credit'}">${money(m.balance_cents)}</span><br>
           <button class="btn small secondary" data-edit-member="${m.id}" style="margin-top:6px">Edit</button>
           <button class="btn small secondary" data-invite-member="${m.id}" style="margin-top:6px">${m.has_password ? 'Reset link' : 'Resend invite'}</button>
+          ${m.id !== me.id ? `<button class="btn small secondary" data-role-member="${m.id}" style="margin-top:6px">${m.role === 'admin' ? 'Remove admin' : 'Make admin'}</button>` : ''}
         </div>
       </div>`).join('');
 
@@ -978,17 +970,13 @@
       <div class="admin-section">
         <h2>Official Results</h2>
         <div class="card">
-          <button class="btn" id="fetchResultsBtn">⚡ Fetch results now (auto)</button>
-          <p style="color:var(--muted);font-size:12px;margin-top:8px">Pulls the official numbers straight from the Lott and lights everything up — tap on draw night once results are posted (usually 30-60 min after the draw). The 3 AM auto-fetch stays as backup.</p>
-        </div>
-        <div class="card">
-          <label>Or enter manually — Draw</label>
+          <label>Draw</label>
           <select id="resultsDraw">${drawOptions}</select>
           <label>7 winning mains + Powerball (space-separated, PB last)</label>
           <input id="resultsNumbers" placeholder="4 8 17 22 31 33 44 7">
           <div class="form-msg" id="resultsMsg"></div>
           <button class="btn" id="resultsBtn">Save results — matching runs automatically</button>
-          <p style="color:var(--muted);font-size:12px">Saving triggers matching, highlighting, win detection and draw status in one action. Manual entry overrides scraped results.</p>
+          <p style="color:var(--muted);font-size:12px">Type in the winning numbers from the Lott after the draw. Saving triggers matching, highlighting, win detection and draw status in one action — saving again overwrites and recomputes.</p>
         </div>
       </div>
 
@@ -1123,6 +1111,22 @@
       });
     });
 
+    app.querySelectorAll('[data-role-member]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const m = data.members.find((x) => x.id === btn.dataset.roleMember);
+        const makeAdmin = m.role !== 'admin';
+        const ok = confirm(makeAdmin
+          ? `Give ${m.name} admin access?\n\nThey'll get the Admin screen: tickets, results, payments, members — everything you can do. They need to log out and back in for it to kick in.`
+          : `Remove ${m.name}'s admin access?\n\nThey'll go back to a normal member and lose the Admin screen on their next request.`);
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await api(`/admin/members/${m.id}`, { method: 'PATCH', body: { role: makeAdmin ? 'admin' : 'member' } });
+          render();
+        } catch (e) { alert(e.message); btn.disabled = false; }
+      });
+    });
+
     on('ndBtn', () => act('ndMsg',
       () => api('/admin/draws', { method: 'POST', body: { draw_date: val('ndDate') } }),
       () => 'Draw created'));
@@ -1208,32 +1212,6 @@
         return api(`/admin/tickets/${saved.ticket_id}/publish`, { method: 'POST' });
       },
       (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, emailed ${o.emailed}`));
-
-    on('fetchResultsBtn', async () => {
-      const btn = document.getElementById('fetchResultsBtn');
-      btn.disabled = true;
-      btn.textContent = 'Fetching…';
-      try {
-        const out = await api('/admin/results/fetch', { method: 'POST' });
-        const auto = out.autoRecorded ? ` — ${out.autoRecorded} winning line(s) auto-banked to the kitty 💰` : '';
-        const messages = {
-          saved: out.hasWinner ? `🏆 WINNER! Results saved and matched${auto}` : '✅ Results in — ticket lit up, no winning line',
-          reprocessed: out.autoRecorded
-            ? `💰 Re-checked${auto}`
-            : out.hasWinner ? '✅ Re-checked — winners already banked, all up to date' : '✅ Re-checked — all up to date',
-          skipped: out.reason === 'dividends_backfilled'
-            ? `💰 Official dividends added${auto || ' — estimates now showing'}`
-            : 'Results were already saved for this draw',
-          no_draw: 'No draw is waiting for results',
-          fetch_failed: "Results aren't up yet (or the source is down) — try again in a few minutes, or enter them manually below",
-          mismatch: `The source's latest draw (${out.scrapedDate || '?'}) doesn't match ours yet — try again shortly`,
-        };
-        alert(messages[out.status] || out.status);
-        if (out.status === 'saved' || out.status === 'skipped') render();
-      } catch (e) { alert(e.message); }
-      btn.disabled = false;
-      btn.textContent = '⚡ Fetch results now (auto)';
-    });
 
     on('resultsBtn', () => act('resultsMsg',
       () => {

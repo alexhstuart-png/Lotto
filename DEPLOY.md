@@ -26,8 +26,8 @@ Key schema guarantees (don't work around them):
 - `transactions` has a partial unique index on `(member_id, draw_id)` where
   `type='weekly_charge'` — the database itself makes double-charging
   impossible.
-- `results` has `unique(draw_id)` — a scraper re-run can never duplicate a
-  result row.
+- `results` has `unique(draw_id)` — saving results twice for a draw can
+  never duplicate a result row; the second save overwrites the first.
 - Balances and the kitty are always `sum(amount_cents)` over ledger rows.
   There is no stored balance column anywhere.
 - RLS is enabled on every table with **no policies**, so the anon key can
@@ -54,8 +54,6 @@ here** — never in the repo, never in frontend code.
 | `RESEND_API_KEY` | yes | Email sending |
 | `SESSION_SECRET` | yes | Signs session JWTs. Long random string, e.g. `openssl rand -hex 32` |
 | `EMAIL_FROM` | recommended | From address, e.g. `Work Lotto <lotto@yourdomain.com>` |
-| `ADMIN_ALERT_EMAIL` | optional | Where scraper-failure alerts go; defaults to all active admin members |
-| `RESULTS_PROVIDER` | optional | Results provider name; defaults to `thelott` |
 | `ANTHROPIC_API_KEY` | optional | Enables 📷 ticket photo scanning (Claude vision). Easiest: enable **Netlify AI Gateway** for the site — it injects this (and `ANTHROPIC_BASE_URL`) automatically and bills through Netlify. A manually set key from console.anthropic.com also works. Manual entry always works without it |
 
 ## 4. Deploy to Netlify
@@ -64,31 +62,25 @@ here** — never in the repo, never in frontend code.
    `functions = "netlify/functions"`; there's no build command.
 2. Deploy. The catch-all API function serves `/api/*`.
 
-## 5. Scheduled functions (cron is UTC!)
+## 5. Scheduled function (cron is UTC!)
 
-Configured in `netlify.toml` — verify they appear under **Functions →
+Configured in `netlify.toml` — verify it appears under **Functions →
 Scheduled** after deploying. Australia/Perth is **UTC+8 with no daylight
-saving**, so conversions are fixed year-round:
+saving**, so the conversion is fixed year-round:
 
 | Job | Perth time | UTC | Cron |
 |---|---|---|---|
 | `reminders-cron` — Friday payment reminders | Friday 08:00 | Friday 00:00 | `0 0 * * 5` |
-| `results-cron` — Powerball results scrape | Friday 03:00 | **Thursday** 19:00 | `0 19 * * 4` |
 
-Note the results job's UTC *day* is Thursday: Friday 03:00 in Perth is still
-Thursday evening in UTC.
+Safety properties (safe to trigger manually to test): at most one automatic
+reminder per member per Perth Friday, enforced via an `email_logs` lookup
+before every send. Skips inactive members, disabled notifications and
+balances at/above the owing threshold.
 
-Safety properties of both jobs (safe to trigger manually to test):
-
-- Reminders: at most one automatic reminder per member per Perth Friday,
-  enforced via an `email_logs` lookup before every send. Skips inactive
-  members, disabled notifications and balances at/above the owing threshold.
-- Results: up to 3 polite fetch attempts (single request each, proper
-  User-Agent), then on total failure marks the draw
-  *"Results pending — auto retrieve failed"* and emails the admin once.
-  On success it saves once (DB unique constraint) and auto-runs matching.
-  If the admin already entered results, the scraper skips the draw; if the
-  admin later edits results, manual values win and matching recomputes.
+There is no automatic results retrieval. After each draw an admin types the
+winning numbers into **Admin → Official Results**; saving runs matching,
+highlighting, win detection and the draw status in one action, and saving
+again overwrites and recomputes.
 
 ## 6. Accounts and passwords
 
@@ -100,6 +92,10 @@ Safety properties of both jobs (safe to trigger manually to test):
 - There is deliberately no open signup. To force-set a password with SQL:
   `update members set password_hash = crypt('new-password', gen_salt('bf', 10)) where email = '...';`
   (or hash locally with `node scripts/hash-password.mjs`).
+- **Admin access**: any admin can press **Make admin** / **Remove admin**
+  next to a member on the Admin screen (never on themselves). The member
+  must log out and back in for a new role to take effect. With SQL:
+  `update members set role = 'admin' where email = '...';`
 - `SITE_URL` (optional env var) sets the base URL used in emailed links;
   it defaults to Netlify's own `URL` variable.
 
@@ -113,12 +109,11 @@ rotate both passwords afterwards (SQL in the script's footer comment).
 ## 8. Tests
 
 - `npm test` — unit tests for matching/highlighting, validation, ledger
-  progression, duplicate-charge protection, reminder dedupe/audience and
-  scraper parsing/retries.
+  progression, duplicate-charge protection and reminder dedupe/audience.
 - `SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/integration-test.mjs`
-  — runs the DB-constraint scenarios (re-publish no double charge, scraper
-  re-run no duplicate rows, manual-overrides-scraped with recompute) against
-  a real Supabase project, then cleans up after itself.
+  — runs the DB-constraint scenarios (re-publish no double charge, re-saving
+  results never duplicates a row, corrected results recompute matching)
+  against a real Supabase project, then cleans up after itself.
 
 ## Appendix: shared-project deployment options
 

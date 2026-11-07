@@ -289,6 +289,10 @@
     9: '2 winning numbers + Powerball',
   };
 
+  /** Small line under the kitty figure: what it's made of. */
+  const kittyBreakdown = (data) => data.members_credit_cents == null ? '' :
+    `<div class="sub">${money(data.members_credit_cents)} members' prepaid · ${money(data.surplus_cents)} winnings &amp; surplus</div>`;
+
   const statusChip = (status) => {
     const [label, cls] = STATUS_LABELS[status] || [status, ''];
     return `<span class="chip ${cls}">${esc(label)}</span>`;
@@ -548,6 +552,7 @@
           <div class="value ${balCls}">${money(data.balance_cents)}</div>
         </div>
       </div>
+      <p class="kitty-note">Kitty is all syndicate money held: ${money(data.members_credit_cents)} members' prepaid + ${money(data.surplus_cents)} winnings &amp; surplus.</p>
       ${data.balance_cents <= LOW_BALANCE_CENTS ? `<div class="card" style="border-color:rgba(231,111,81,0.5)">
         <p style="margin:0;color:var(--red);font-weight:600">Your balance is ${money(data.balance_cents)} — top up before Thursday to stay in the draw. Weekly ticket is ${money(data.weekly_charge_cents)}.</p>
       </div>` : ''}
@@ -989,7 +994,7 @@
       payments: owingCount ? `${owingCount} owing` : 'Everyone paid up',
       winnings: linesNeedingAmount ? `⚠️ ${linesNeedingAmount} line(s) need an amount` : 'All lines banked',
       settings: `${money(data.settings.weekly_charge_cents)} / week`,
-      kitty: `${money(data.kitty_cents)}`,
+      kitty: `${money(data.surplus_cents)} winnings & surplus`,
       email: data.email_logs.length ? `last ${new Date(data.email_logs[0].sent_at).toLocaleDateString('en-AU')}` : 'none yet',
     };
     const section = (key, title, body) => `
@@ -999,7 +1004,7 @@
       </details>`;
 
     app.innerHTML = header() + `
-      <div class="stat"><div class="label">Kitty</div><div class="value">${money(data.kitty_cents)}</div></div>
+      <div class="stat"><div class="label">Kitty</div><div class="value">${money(data.kitty_cents)}</div>${kittyBreakdown(data)}</div>
 
 ${section('members', 'Members', `
         <div class="card">${memberRows}</div>

@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import {
   T,
   supabase, must, chargeDb, getSettings, auditLog,
-  memberBalanceCents, memberBalancesCents, kittyBalanceCents,
+  memberBalanceCents, memberBalancesCents, potCents,
 } from '../../lib/db.mjs';
 import {
   signSession, sessionCookie, clearSessionCookie, sessionFromRequest,
@@ -181,9 +181,9 @@ async function handleMe(session) {
 }
 
 async function handleHome(session) {
-  const [balance, kitty, draw] = await Promise.all([
+  const [balance, pot, draw] = await Promise.all([
     memberBalanceCents(session.memberId),
-    kittyBalanceCents(),
+    potCents(),
     latestDraw(),
   ]);
   const settings = await getSettings();
@@ -197,7 +197,11 @@ async function handleHome(session) {
   const balances = await memberBalancesCents(allMembers.map((m) => m.id));
   return json({
     balance_cents: balance,
-    kitty_cents: kitty,
+    // kitty_cents is the whole pot (what the organiser holds); the two parts
+    // are broken out for the sub-line under it.
+    kitty_cents: pot.pot_cents,
+    members_credit_cents: pot.members_credit_cents,
+    surplus_cents: pot.surplus_cents,
     weekly_charge_cents: settings.weekly_charge_cents,
     total_winnings_cents: totalWinnings,
     members: allMembers.map((m) => ({ name: m.name, balance_cents: balances.get(m.id) ?? 0 })),
@@ -250,7 +254,7 @@ async function handleNotificationsToggle(session, req) {
 async function adminOverview() {
   const members = must(await supabase().from(T('members')).select('*').order('name'));
   const balances = await memberBalancesCents(members.map((m) => m.id));
-  const kitty = await kittyBalanceCents();
+  const pot = await potCents();
   const settings = await getSettings();
   const draws = must(
     await supabase().from(T('draws')).select('*').order('draw_date', { ascending: false }).limit(20)
@@ -268,7 +272,9 @@ async function adminOverview() {
   );
   return json({
     members: members.map((m) => ({ ...publicMember(m), balance_cents: balances.get(m.id) ?? 0 })),
-    kitty_cents: kitty,
+    kitty_cents: pot.pot_cents,
+    members_credit_cents: pot.members_credit_cents,
+    surplus_cents: pot.surplus_cents,
     settings: {
       weekly_charge_cents: settings.weekly_charge_cents,
       charge_on_publish: settings.charge_on_publish,
@@ -503,7 +509,7 @@ async function adminPublishTicket(session, req, ticketId) {
   // the charge (balances computed post-charge so the email reflects reality).
   let emailed = 0;
   if (firstPublish) {
-    const kitty = await kittyBalanceCents();
+    const kitty = (await potCents()).pot_cents; // same figure the app shows
     const audience = selectBroadcastAudience(allMembers);
     const balances = await memberBalancesCents(audience.map((m) => m.id));
     for (const m of audience) {

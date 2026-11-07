@@ -261,10 +261,23 @@
   const STATUS_LABELS = {
     upcoming: ['Upcoming', 'draft'],
     waiting_results: ['Waiting for Results', 'waiting'],
-    results_pending_failed: ['Results pending — auto retrieve failed', 'failed'],
+    results_pending_failed: ['Results pending', 'failed'],
     results_available: ['Results Available', 'results'],
     checked: ['Checked', 'results'],
     winner: ['Winner!', 'winner'],
+  };
+
+  // What each Powerball division needs — shown when asking for prize amounts.
+  const DIVISION_RULES = {
+    1: '7 winning numbers + Powerball',
+    2: '7 winning numbers',
+    3: '6 winning numbers + Powerball',
+    4: '6 winning numbers',
+    5: '5 winning numbers + Powerball',
+    6: '4 winning numbers + Powerball',
+    7: '5 winning numbers',
+    8: '3 winning numbers + Powerball',
+    9: '2 winning numbers + Powerball',
   };
 
   const statusChip = (status) => {
@@ -560,7 +573,7 @@
     app.innerHTML = header() + `
       <div class="card">
         <h2>${esc(fmtDate(d.draw.draw_date))} <span style="float:right">${statusChip(d.draw.status)}</span></h2>
-        ${d.result ? officialStrip(d.result) : '<p style="color:var(--muted);margin:0">Results land Friday morning — numbers will light up automatically.</p>'}
+        ${d.result ? officialStrip(d.result) : '<p style="color:var(--muted);margin:0">Results go up once the admin enters the winning numbers after the draw — your balls light up automatically.</p>'}
       </div>
       ${ticketStub(d)}
       ${d.ticket && d.ticket.published_at ? `<p style="color:var(--muted);font-size:12px;text-align:center">Published ${new Date(d.ticket.published_at).toLocaleString('en-AU')}</p>` : ''}`;
@@ -723,8 +736,7 @@
         ${estRow}
         ${lines}
         <div class="pill-btns" style="margin-top:8px">
-          <button class="btn small" data-pfetch="${t.id}">⚡ Fetch latest result</button>
-          <button class="btn small secondary" data-presult="${t.id}" data-ptype="${t.game_type}">Enter result</button>
+          <button class="btn small" data-presult="${t.id}" data-ptype="${t.game_type}">Enter result</button>
           <button class="btn small danger" data-pdel="${t.id}">Delete</button>
         </div>
       </div>`;
@@ -827,14 +839,6 @@
       } catch (e) { msg('pMsg', e.message, false); }
     });
 
-    app.querySelectorAll('[data-pfetch]').forEach((btn) => btn.addEventListener('click', async () => {
-      btn.disabled = true; btn.textContent = 'Fetching…';
-      try {
-        await api(`/admin/personal/${btn.dataset.pfetch}/fetch-result`, { method: 'POST' });
-        render();
-      } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = '⚡ Fetch latest result'; }
-    }));
-
     app.querySelectorAll('[data-presult]').forEach((btn) => btn.addEventListener('click', async () => {
       const isSfl = btn.dataset.ptype === 'setforlife';
       const input = prompt(isSfl
@@ -885,6 +889,33 @@
   // Render a game back into its text-line form for the editor.
   const gameToLine = (g) => g.numbers.join(' ') + ' ' + (g.powerhit ? 'PH' : g.powerball);
 
+  /**
+   * Parse the Lott's division list as copied from its results page, e.g.
+   *   Division 9
+   *   $14.10
+   *   2 winning numbers and Powerball
+   *   580,661 winners! (70,659 from WA)
+   * Returns [] for blank input, null when text is present but unreadable.
+   */
+  const parseDividends = (text) => {
+    const t = (text || '').trim();
+    if (!t) return [];
+    const out = [];
+    const seen = new Set();
+    const re = /Division\s*(\d)\b[^$]*?\$\s*([\d,]+(?:\.\d{1,2})?)(?:[^]*?([\d,]+)\s+winners?)?/gi;
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      const division = parseInt(m[1], 10);
+      const amount = parseFloat(m[2].replace(/,/g, ''));
+      if (division < 1 || division > 9 || seen.has(division) || !Number.isFinite(amount)) return null;
+      seen.add(division);
+      const row = { division, blocDividend: amount };
+      if (m[3]) row.blocNumberOfWinners = parseInt(m[3].replace(/,/g, ''), 10);
+      out.push(row);
+    }
+    return out.length ? out : null;
+  };
+
   views.admin = async () => {
     const data = await api('/admin/overview');
     const draws = data.draws;
@@ -903,6 +934,7 @@
           <span class="amount ${m.balance_cents < 0 ? 'owing' : 'credit'}">${money(m.balance_cents)}</span><br>
           <button class="btn small secondary" data-edit-member="${m.id}" style="margin-top:6px">Edit</button>
           <button class="btn small secondary" data-invite-member="${m.id}" style="margin-top:6px">${m.has_password ? 'Reset link' : 'Resend invite'}</button>
+          ${m.id !== me.id ? `<button class="btn small secondary" data-role-member="${m.id}" style="margin-top:6px">${m.role === 'admin' ? 'Remove admin' : 'Make admin'}</button>` : ''}
         </div>
       </div>`).join('');
 
@@ -978,17 +1010,15 @@
       <div class="admin-section">
         <h2>Official Results</h2>
         <div class="card">
-          <button class="btn" id="fetchResultsBtn">⚡ Fetch results now (auto)</button>
-          <p style="color:var(--muted);font-size:12px;margin-top:8px">Pulls the official numbers straight from the Lott and lights everything up — tap on draw night once results are posted (usually 30-60 min after the draw). The 3 AM auto-fetch stays as backup.</p>
-        </div>
-        <div class="card">
-          <label>Or enter manually — Draw</label>
+          <label>Draw</label>
           <select id="resultsDraw">${drawOptions}</select>
           <label>7 winning mains + Powerball (space-separated, PB last)</label>
           <input id="resultsNumbers" placeholder="4 8 17 22 31 33 44 7">
+          <label>Dividends (optional shortcut) — paste the Division list from the Lott's results page, or leave blank and you'll be asked for the amount of each division you hit</label>
+          <textarea id="resultsDividends" rows="4" placeholder="Division 1&#10;$0.00&#10;7 winning numbers and Powerball&#10;…&#10;Division 9&#10;$14.10"></textarea>
           <div class="form-msg" id="resultsMsg"></div>
           <button class="btn" id="resultsBtn">Save results — matching runs automatically</button>
-          <p style="color:var(--muted);font-size:12px">Saving triggers matching, highlighting, win detection and draw status in one action. Manual entry overrides scraped results.</p>
+          <p style="color:var(--muted);font-size:12px">Type in the winning numbers from the Lott after the draw. Saving triggers matching, highlighting, win detection and draw status in one action — saving again overwrites and recomputes. For every division you hit you'll be asked for that week's prize per line, and each line is banked to the kitty.</p>
         </div>
       </div>
 
@@ -1020,9 +1050,10 @@
           <div class="form-msg" id="winMsg"></div>
           <div class="pill-btns">
             <button class="btn small" id="winBtn">Confirm winnings</button>
+            <button class="btn small secondary" id="winPromptBtn">💰 Enter amounts for hit lines</button>
             <button class="btn small secondary" id="announceBtn" disabled>Announce win to members</button>
           </div>
-          <p style="color:var(--muted);font-size:12px">Prize amounts are never guessed — enter the amount from the official ticket check.</p>
+          <p style="color:var(--muted);font-size:12px">Prize amounts are never guessed — enter the amount from the Lott's results page. "Enter amounts for hit lines" asks once per division for the selected draw and banks every line.</p>
         </div>
       </div>
 
@@ -1071,6 +1102,50 @@
       el.className = 'form-msg ' + (ok ? 'ok' : 'error');
     };
     const dollars = (id) => Math.round(parseFloat(val(id) || '0') * 100);
+
+    /**
+     * Ask for the prize amount of every winning line that doesn't have one
+     * yet — one prompt per division (every line in a division pays the
+     * same), then record each line and bank it to the kitty. Cancel skips
+     * that division; it stays pre-filled under Confirm Winnings.
+     * @param {{id:string, draw_date:string}} draw
+     * @param {{gameIndex:number, division:number}[]} lines  unconfirmed winners
+     */
+    const promptWinnings = async (draw, lines) => {
+      const byDiv = new Map();
+      for (const l of lines) {
+        if (!byDiv.has(l.division)) byDiv.set(l.division, []);
+        byDiv.get(l.division).push(l.gameIndex);
+      }
+      let banked = 0;
+      let totalCents = 0;
+      const skipped = [];
+      for (const division of [...byDiv.keys()].sort((a, b) => a - b)) {
+        const games = byDiv.get(division).sort((a, b) => a - b);
+        let amountCents = null;
+        while (amountCents === null) {
+          const answer = prompt(
+            `🏆 Division ${division} — ${DIVISION_RULES[division] || ''}\n` +
+            `Draw ${fmtDate(draw.draw_date)} · hit on ${games.length} line${games.length > 1 ? 's' : ''} (game${games.length > 1 ? 's' : ''} ${games.join(', ')})\n\n` +
+            `Enter the Division ${division} prize PER LINE ($) from the Lott's results page. Cancel to skip for now.`
+          );
+          if (answer === null) break;
+          const parsed = Math.round(parseFloat(String(answer).replace(/[$,\s]/g, '')) * 100);
+          if (Number.isFinite(parsed) && parsed > 0) amountCents = parsed;
+          else alert('Enter a dollar amount above zero, e.g. 14.10');
+        }
+        if (amountCents === null) { skipped.push(...games); continue; }
+        for (const gameIndex of games) {
+          await api('/admin/winnings', {
+            method: 'POST',
+            body: { draw_id: draw.id, division, game_index: gameIndex, amount_cents: amountCents, add_to_kitty: true },
+          });
+          banked++;
+          totalCents += amountCents;
+        }
+      }
+      return { banked, totalCents, skipped };
+    };
     const act = async (msgId, fn, okText, { rerender = true } = {}) => {
       try {
         const out = await fn();
@@ -1120,6 +1195,22 @@
           await api(`/admin/members/${m.id}`, { method: 'PATCH', body: { name, is_active: active } });
           render();
         } catch (e) { alert(e.message); }
+      });
+    });
+
+    app.querySelectorAll('[data-role-member]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const m = data.members.find((x) => x.id === btn.dataset.roleMember);
+        const makeAdmin = m.role !== 'admin';
+        const ok = confirm(makeAdmin
+          ? `Give ${m.name} admin access?\n\nThey'll get the Admin screen: tickets, results, payments, members — everything you can do. They need to log out and back in for it to kick in.`
+          : `Remove ${m.name}'s admin access?\n\nThey'll go back to a normal member and lose the Admin screen on their next request.`);
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await api(`/admin/members/${m.id}`, { method: 'PATCH', body: { role: makeAdmin ? 'admin' : 'member' } });
+          render();
+        } catch (e) { alert(e.message); btn.disabled = false; }
       });
     });
 
@@ -1209,42 +1300,32 @@
       },
       (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, emailed ${o.emailed}`));
 
-    on('fetchResultsBtn', async () => {
-      const btn = document.getElementById('fetchResultsBtn');
-      btn.disabled = true;
-      btn.textContent = 'Fetching…';
-      try {
-        const out = await api('/admin/results/fetch', { method: 'POST' });
-        const auto = out.autoRecorded ? ` — ${out.autoRecorded} winning line(s) auto-banked to the kitty 💰` : '';
-        const messages = {
-          saved: out.hasWinner ? `🏆 WINNER! Results saved and matched${auto}` : '✅ Results in — ticket lit up, no winning line',
-          reprocessed: out.autoRecorded
-            ? `💰 Re-checked${auto}`
-            : out.hasWinner ? '✅ Re-checked — winners already banked, all up to date' : '✅ Re-checked — all up to date',
-          skipped: out.reason === 'dividends_backfilled'
-            ? `💰 Official dividends added${auto || ' — estimates now showing'}`
-            : 'Results were already saved for this draw',
-          no_draw: 'No draw is waiting for results',
-          fetch_failed: "Results aren't up yet (or the source is down) — try again in a few minutes, or enter them manually below",
-          mismatch: `The source's latest draw (${out.scrapedDate || '?'}) doesn't match ours yet — try again shortly`,
-        };
-        alert(messages[out.status] || out.status);
-        if (out.status === 'saved' || out.status === 'skipped') render();
-      } catch (e) { alert(e.message); }
-      btn.disabled = false;
-      btn.textContent = '⚡ Fetch results now (auto)';
-    });
-
     on('resultsBtn', () => act('resultsMsg',
-      () => {
+      async () => {
         const parsed = parseGameLine(val('resultsNumbers'), { exactMains: 7 });
         if (!parsed) throw new Error('Enter exactly 8 numbers: 7 mains then the Powerball');
-        return api('/admin/results', {
+        const divisions = parseDividends(val('resultsDividends'));
+        if (divisions === null) throw new Error('Could not read the dividends — paste the "Division 1 … $amount" list as shown on the Lott, or leave it blank');
+        const drawId = val('resultsDraw');
+        const out = await api('/admin/results', {
           method: 'POST',
-          body: { draw_id: val('resultsDraw'), numbers: parsed.numbers, powerball: parsed.powerball },
+          body: { draw_id: drawId, numbers: parsed.numbers, powerball: parsed.powerball, divisions },
         });
+        // Any winning line without an amount yet: ask now, per division.
+        const confirmed = new Set(out.confirmedGames || []);
+        const unconfirmed = (out.winners || []).filter((w) => !confirmed.has(w.gameIndex));
+        const d = draws.find((x) => x.draw.id === drawId);
+        out.prompted = unconfirmed.length && d ? await promptWinnings(d.draw, unconfirmed) : null;
+        return out;
       },
-      (o) => o.hasWinner ? '🏆 WINNER detected — matching done' : 'Results saved — matching done, no winning line'));
+      (o) => {
+        if (!o.hasWinner) return 'Results saved — matching done, no winning line';
+        const parts = [];
+        if (o.autoRecorded) parts.push(`${o.autoRecorded} line(s) banked at the official dividend`);
+        if (o.prompted && o.prompted.banked) parts.push(`${o.prompted.banked} line(s) banked, ${money(o.prompted.totalCents)} to the kitty`);
+        if (o.prompted && o.prompted.skipped.length) parts.push(`game ${o.prompted.skipped.join(', ')} still need an amount — see Confirm Winnings`);
+        return `🏆 WINNER — ${(o.winners || []).length} winning line(s)${parts.length ? ' 💰 ' + parts.join(' · ') : ''}`;
+      }));
 
     on('payBtn', () => act('payMsg',
       () => api('/admin/payments', {
@@ -1307,6 +1388,21 @@
           (remaining ? ` — ${remaining} more line(s) pre-filled, confirm again` : ' — all lines done. You can announce below');
       },
       { rerender: false }));
+
+    on('winPromptBtn', () => act('winMsg',
+      async () => {
+        const drawId = val('winDraw');
+        const pend = pendingWins.get(drawId) || [];
+        const d = draws.find((x) => x.draw.id === drawId);
+        if (!pend.length || !d) throw new Error('No winning lines are waiting for an amount on that draw');
+        const out = await promptWinnings(d.draw, pend);
+        pendingWins.set(drawId, pend.filter((p) => out.skipped.includes(p.gameIndex)));
+        prefillWin();
+        return out;
+      },
+      (o) => o.banked
+        ? `Banked ${o.banked} line(s) — ${money(o.totalCents)} to the kitty${o.skipped.length ? ` · game ${o.skipped.join(', ')} skipped` : ''}`
+        : 'Nothing banked — all lines skipped'));
 
     on('announceBtn', () => act('winMsg',
       () => api('/admin/winnings/announce', { method: 'POST', body: { winning_id: lastWinningId } }),

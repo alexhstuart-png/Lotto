@@ -1,23 +1,18 @@
 [build]
   publish = "public"
   functions = "netlify/functions"
-  # Marker-armed one-shot helpers (no-ops when unarmed; never fail the build):
-  # send-test-email sends one Resend test; run-fetch-once runs the results
-  # fetch/backfill from the build's network.
-  command = "node scripts/send-test-email.mjs && node scripts/run-fetch-once.mjs"
+  # Marker-armed one-shot helper (no-op when unarmed; never fails the build):
+  # send-test-email sends one Resend test.
+  command = "node scripts/send-test-email.mjs"
 
 [functions]
   node_bundler = "esbuild"
 
-# Scheduled functions — Netlify cron runs in UTC.
+# Scheduled function — Netlify cron runs in UTC.
 # Australia/Perth is UTC+8 year-round (no daylight saving), so:
 #   Friday 08:00 Perth  = Friday   00:00 UTC  ->  "0 0 * * 5"   (payment reminders)
-#   Friday 03:00 Perth  = Thursday 19:00 UTC  ->  "0 19 * * 4"  (Powerball results scrape)
 [functions."reminders-cron"]
   schedule = "0 0 * * 5"
-
-[functions."results-cron"]
-  schedule = "0 19 * * 4"
 
 [[headers]]
   for = "/*"

@@ -116,3 +116,19 @@ test('winnings estimate from official dividends: 2 x Div 9', async () => {
   // no winners -> null
   assert.equal(estimateWinnings([], divisions), null);
 });
+
+test('matchTicket keeps the PowerHit flag: 2 mains on a PowerHit line is a Div 9 win', () => {
+  // Draw 2026-11-05: 9 17 22 24 30 33 35 PB 13. Game 36 was a PowerHit
+  // line with two matching mains — a real Div 9 that the ticket-level
+  // matcher used to drop because it rebuilt each game without powerhit.
+  const result = { numbers: [9, 17, 22, 24, 30, 33, 35], powerball: 13 };
+  const games = [
+    { id: 'a', game_index: 34, numbers: [1, 9, 17, 23, 24, 33, 35], powerball: 15, powerhit: false },
+    { id: 'b', game_index: 36, numbers: [1, 10, 22, 27, 29, 31, 35], powerball: null, powerhit: true },
+    { id: 'c', game_index: 40, numbers: [10, 14, 16, 21, 29, 30, 34], powerball: null, powerhit: true },
+  ];
+  const t = matchTicket(games, result);
+  assert.deepEqual(t.winners.map((w) => [w.gameIndex, w.division]), [[34, 7], [36, 9]]);
+  assert.equal(t.matches[2].powerballMatched, true); // PowerHit always hits the PB
+  assert.equal(t.matches[2].isWinner, false); // but 1 main + PB is nothing
+});

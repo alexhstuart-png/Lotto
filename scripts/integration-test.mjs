@@ -5,9 +5,9 @@
 //
 //   1. Duplicate charge on re-publish: the partial unique index rejects a
 //      second weekly_charge for the same (member, draw).
-//   2. Scraper re-run after success: unique(draw_id) on results means the
-//      pipeline skips, never duplicates.
-//   3. Manual results overwrite scraped ones and matching recomputes.
+//   2. Saving results twice for one draw: unique(draw_id) on results means
+//      the second save overwrites, never duplicates.
+//   3. Corrected results overwrite the first entry and matching recomputes.
 //
 // Usage:
 //   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/integration-test.mjs
@@ -59,30 +59,30 @@ try {
     assert(rows.length === 1, `expected 1 charge row, got ${rows.length}`);
   });
 
-  await check('scraped save triggers matching; re-run skips without duplicating', async () => {
+  await check('saving results triggers matching; saving again overwrites without duplicating', async () => {
     const save1 = await saveResultsAndProcess({
-      drawId: draw.id, numbers: [4, 8, 17, 22, 31, 33, 34], powerball: 6, source: 'scraped',
+      drawId: draw.id, numbers: [4, 8, 17, 22, 31, 33, 34], powerball: 6,
     });
-    assert(save1.saved === true, 'first scraped save should persist');
+    assert(save1.saved === true, 'first save should persist');
     assert(save1.status === 'results_available', `status should update, got ${save1.status}`);
     const save2 = await saveResultsAndProcess({
-      drawId: draw.id, numbers: [1, 2, 3, 5, 6, 7, 9], powerball: 1, source: 'scraped',
+      drawId: draw.id, numbers: [1, 2, 3, 5, 6, 7, 9], powerball: 1,
     });
-    assert(save2.saved === false && save2.skipped === 'result_already_exists', 'scraper re-run must skip');
+    assert(save2.saved === true, 'second save must overwrite');
     const rows = must(await sb.from(T('results')).select('numbers').eq('draw_id', draw.id));
     assert(rows.length === 1, `expected 1 result row, got ${rows.length}`);
-    assert(rows[0].numbers[0] === 4, 'original result must be untouched');
+    assert(rows[0].numbers[0] === 1, 'second save must replace the numbers');
   });
 
-  await check('manual entry overwrites and matching recomputes (winner detection)', async () => {
-    // Manual result matching game 1 exactly -> Division 1.
+  await check('corrected results overwrite and matching recomputes (winner detection)', async () => {
+    // Corrected result matching game 1 exactly -> Division 1.
     const save = await saveResultsAndProcess({
-      drawId: draw.id, numbers: [4, 11, 12, 17, 22, 31, 35], powerball: 2, source: 'manual',
+      drawId: draw.id, numbers: [4, 11, 12, 17, 22, 31, 35], powerball: 2,
     });
-    assert(save.saved === true, 'manual save must overwrite');
+    assert(save.saved === true, 'corrected save must overwrite');
     assert(save.hasWinner === true && save.status === 'winner', 'winner must be detected');
     const rows = must(await sb.from(T('results')).select('source').eq('draw_id', draw.id));
-    assert(rows.length === 1 && rows[0].source === 'manual', 'manual is authoritative');
+    assert(rows.length === 1 && rows[0].source === 'manual', 'one authoritative result row');
   });
 } finally {
   console.log('Cleaning up fixtures…');

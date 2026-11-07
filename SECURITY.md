@@ -43,9 +43,6 @@ validation. Findings were fixed before release; residual notes at the end.
   cents), emails, dates (draws must be Thursdays), UUIDs, booleans, string
   lengths. Client-side parsing is a convenience only.
 - All user-derived HTML output in the frontend and in emails is escaped.
-- The scraper validates fetched numbers through the same validator and
-  refuses ambiguous parses; it also refuses results whose draw date doesn't
-  match the awaited draw.
 
 ## Abuse / integrity
 

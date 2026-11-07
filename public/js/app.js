@@ -876,6 +876,33 @@
   // Render a game back into its text-line form for the editor.
   const gameToLine = (g) => g.numbers.join(' ') + ' ' + (g.powerhit ? 'PH' : g.powerball);
 
+  /**
+   * Parse the Lott's division list as copied from its results page, e.g.
+   *   Division 9
+   *   $14.10
+   *   2 winning numbers and Powerball
+   *   580,661 winners! (70,659 from WA)
+   * Returns [] for blank input, null when text is present but unreadable.
+   */
+  const parseDividends = (text) => {
+    const t = (text || '').trim();
+    if (!t) return [];
+    const out = [];
+    const seen = new Set();
+    const re = /Division\s*(\d)\b[^$]*?\$\s*([\d,]+(?:\.\d{1,2})?)(?:[^]*?([\d,]+)\s+winners?)?/gi;
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      const division = parseInt(m[1], 10);
+      const amount = parseFloat(m[2].replace(/,/g, ''));
+      if (division < 1 || division > 9 || seen.has(division) || !Number.isFinite(amount)) return null;
+      seen.add(division);
+      const row = { division, blocDividend: amount };
+      if (m[3]) row.blocNumberOfWinners = parseInt(m[3].replace(/,/g, ''), 10);
+      out.push(row);
+    }
+    return out.length ? out : null;
+  };
+
   views.admin = async () => {
     const data = await api('/admin/overview');
     const draws = data.draws;
@@ -974,9 +1001,11 @@
           <select id="resultsDraw">${drawOptions}</select>
           <label>7 winning mains + Powerball (space-separated, PB last)</label>
           <input id="resultsNumbers" placeholder="4 8 17 22 31 33 44 7">
+          <label>Dividends (optional) — paste the Division list from the Lott's results page</label>
+          <textarea id="resultsDividends" rows="4" placeholder="Division 1&#10;$0.00&#10;7 winning numbers and Powerball&#10;…&#10;Division 9&#10;$14.10"></textarea>
           <div class="form-msg" id="resultsMsg"></div>
           <button class="btn" id="resultsBtn">Save results — matching runs automatically</button>
-          <p style="color:var(--muted);font-size:12px">Type in the winning numbers from the Lott after the draw. Saving triggers matching, highlighting, win detection and draw status in one action — saving again overwrites and recomputes.</p>
+          <p style="color:var(--muted);font-size:12px">Type in the winning numbers from the Lott after the draw. Saving triggers matching, highlighting, win detection and draw status in one action — saving again overwrites and recomputes. With dividends pasted, every winning line is banked to the kitty at its official amount; without them, confirm each line under Winnings.</p>
         </div>
       </div>
 
@@ -1217,12 +1246,19 @@
       () => {
         const parsed = parseGameLine(val('resultsNumbers'), { exactMains: 7 });
         if (!parsed) throw new Error('Enter exactly 8 numbers: 7 mains then the Powerball');
+        const divisions = parseDividends(val('resultsDividends'));
+        if (divisions === null) throw new Error('Could not read the dividends — paste the "Division 1 … $amount" list as shown on the Lott, or leave it blank');
         return api('/admin/results', {
           method: 'POST',
-          body: { draw_id: val('resultsDraw'), numbers: parsed.numbers, powerball: parsed.powerball },
+          body: { draw_id: val('resultsDraw'), numbers: parsed.numbers, powerball: parsed.powerball, divisions },
         });
       },
-      (o) => o.hasWinner ? '🏆 WINNER detected — matching done' : 'Results saved — matching done, no winning line'));
+      (o) => {
+        const banked = o.autoRecorded ? ` — ${o.autoRecorded} winning line(s) banked to the kitty at the official dividend 💰` : '';
+        return o.hasWinner
+          ? `🏆 WINNER detected — matching done${banked || ' (no dividends pasted — confirm each line under Winnings)'}`
+          : 'Results saved — matching done, no winning line';
+      }));
 
     on('payBtn', () => act('payMsg',
       () => api('/admin/payments', {

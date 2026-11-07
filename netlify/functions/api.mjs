@@ -535,13 +535,24 @@ async function adminEnterResults(session, req) {
   if (!drawId) return err('draw_id required');
   const v = validateResult({ numbers: body.numbers, powerball: body.powerball });
   if (!v.ok) return err(v.error);
+  // Optional official dividends (dollars per division, as published by the
+  // Lott). When present, winning lines whose division has a dividend are
+  // banked to the kitty automatically by the pipeline.
   let divisions = null;
   if (body.divisions !== undefined && body.divisions !== null) {
     if (!Array.isArray(body.divisions) || body.divisions.length > 9) return err('Invalid divisions');
-    divisions = body.divisions.map((d) => ({
-      division: validateCents(d.division ?? 0, { max: 9 }),
-      note: typeof d.note === 'string' ? d.note.slice(0, 200) : null,
-    }));
+    const seen = new Set();
+    divisions = [];
+    for (const d of body.divisions) {
+      const division = Number.isInteger(d?.division) && d.division >= 1 && d.division <= 9 ? d.division : null;
+      const amount = typeof d?.blocDividend === 'number' && Number.isFinite(d.blocDividend)
+        && d.blocDividend >= 0 && d.blocDividend <= 1e9 ? Math.round(d.blocDividend * 100) / 100 : null;
+      if (division === null || amount === null || seen.has(division)) return err('Invalid divisions — each division 1-9 once with a dollar amount');
+      seen.add(division);
+      const winners = Number.isInteger(d.blocNumberOfWinners) && d.blocNumberOfWinners >= 0 ? d.blocNumberOfWinners : null;
+      divisions.push({ division, blocDividend: amount, blocNumberOfWinners: winners });
+    }
+    if (divisions.length === 0) divisions = null;
   }
   const outcome = await saveResultsAndProcess({
     drawId, numbers: v.numbers, powerball: v.powerball, divisions,

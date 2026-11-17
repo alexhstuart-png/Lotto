@@ -18,7 +18,7 @@ import {
   validateCents, validateDate, validateUuid,
 } from '../../lib/validate.mjs';
 import { matchTicket, matchGame } from '../../lib/matching.mjs';
-import { chargeMembersForDraw } from '../../lib/ledger.mjs';
+import { chargeMembersForDraw, ticketCostDeltaCents } from '../../lib/ledger.mjs';
 import { saveResultsAndProcess } from '../../lib/results-pipeline.mjs';
 import { sendEmail, ticketPublishedEmail, announceWinEmail, inviteEmail } from '../../lib/email.mjs';
 import { selectBroadcastAudience } from '../../lib/audience.mjs';
@@ -367,6 +367,41 @@ async function adminCreateDraw(session, req) {
   return json({ draw: data }, 201);
 }
 
+/**
+ * Settle a draw's ticket against the kitty. The weekly $25-a-head charges
+ * cover the ticket first; only the DIFFERENCE moves the kitty: spend more
+ * than the charges and the extra comes off the kitty, spend less and the
+ * change goes into it. Idempotent true-up: existing ticket_cost rows for
+ * the draw are counted, so re-publishing changes nothing, and raising the
+ * ticket price after publishing (extra lines bought) adds just the delta.
+ */
+async function settleTicketCost(draw, ticket, actorId, reason = null) {
+  if (!ticket || ticket.cost_cents <= 0) return 0;
+  const chargeRows = must(
+    await supabase().from(T('transactions')).select('amount_cents')
+      .eq('draw_id', draw.id).eq('type', 'weekly_charge')
+  );
+  const collectedCents = chargeRows.reduce((s, r) => s + Math.abs(r.amount_cents), 0);
+  const existing = must(
+    await supabase().from(T('kitty_transactions')).select('amount_cents')
+      .eq('draw_id', draw.id).eq('type', 'ticket_cost')
+  );
+  const recordedNetCents = existing.reduce((s, r) => s + r.amount_cents, 0);
+  const delta = ticketCostDeltaCents({ costCents: ticket.cost_cents, collectedCents, recordedNetCents });
+  if (delta === 0) return 0;
+  const money = (c) => `$${(c / 100).toFixed(2)}`;
+  must(
+    await supabase().from(T('kitty_transactions')).insert({
+      type: 'ticket_cost', amount_cents: delta, draw_id: draw.id,
+      note: reason
+        ? `Powerball ticket ${draw.draw_date}: ${reason} — now ${money(ticket.cost_cents)} ticket vs ${money(collectedCents)} member charges`
+        : `Powerball ticket ${draw.draw_date}: ${money(ticket.cost_cents)} ticket vs ${money(collectedCents)} member charges`,
+      created_by: actorId,
+    }).select().single()
+  );
+  return delta;
+}
+
 /** Create or replace the ticket (and its games) for a draw. */
 async function adminSaveTicket(session, req) {
   const body = await readBody(req);
@@ -408,15 +443,25 @@ async function adminSaveTicket(session, req) {
     .insert(games.map((g) => ({ ...g, ticket_id: ticket.id })));
   if (insErr) return err('Could not save games');
 
+  let kittyDeltaCents = 0;
   if (editingPublished) {
-    // Editing a published ticket: audit-logged, and per the duplicate-charge
-    // rule nothing here ever touches the ledger.
+    // Editing a published ticket: audit-logged. Members are never charged
+    // again (duplicate-charge rule), but if the ticket PRICE changed — e.g.
+    // extra lines bought after publishing — the kitty picks up the
+    // difference so it keeps matching the cash.
     await auditLog({
       actorId: session.memberId, action: 'published_ticket_edited', entity: 'tickets', entityId: ticket.id,
       details: { before: { games: previousGames, cost_cents: ticket.cost_cents }, after: { games, cost_cents: costCents } },
     });
+    if (costCents !== ticket.cost_cents) {
+      const money = (c) => `$${(c / 100).toFixed(2)}`;
+      kittyDeltaCents = await settleTicketCost(
+        draw, { ...ticket, cost_cents: costCents }, session.memberId,
+        `cost changed ${money(ticket.cost_cents)} to ${money(costCents)} after publish`
+      );
+    }
   }
-  return json({ ticket_id: ticket.id, games_saved: games.length, edited_published: !!editingPublished });
+  return json({ ticket_id: ticket.id, games_saved: games.length, edited_published: !!editingPublished, kitty_delta_cents: kittyDeltaCents });
 }
 
 /** Admin: read the game lines off a photo of the paper ticket (pre-fill only). */
@@ -477,32 +522,9 @@ async function adminPublishTicket(session, req, ticketId) {
     );
   }
 
-  // Kitty settles the ticket — exactly once per draw. The weekly $25-a-head
-  // charges cover the ticket first; only the DIFFERENCE moves the kitty:
-  // spend more than the charges and the extra comes off the kitty, spend
-  // less and the change goes into it.
-  const existingCost = must(
-    await supabase().from(T('kitty_transactions')).select('id')
-      .eq('draw_id', draw.id).eq('type', 'ticket_cost')
-  );
-  if (existingCost.length === 0 && ticket.cost_cents > 0) {
-    const chargeRows = must(
-      await supabase().from(T('transactions')).select('amount_cents')
-        .eq('draw_id', draw.id).eq('type', 'weekly_charge')
-    );
-    const collectedCents = chargeRows.reduce((s, r) => s + Math.abs(r.amount_cents), 0);
-    const netCents = collectedCents - ticket.cost_cents;
-    if (netCents !== 0) {
-      const money = (c) => `$${(c / 100).toFixed(2)}`;
-      must(
-        await supabase().from(T('kitty_transactions')).insert({
-          type: 'ticket_cost', amount_cents: netCents, draw_id: draw.id,
-          note: `Powerball ticket ${draw.draw_date}: ${money(ticket.cost_cents)} ticket vs ${money(collectedCents)} member charges`,
-          created_by: session.memberId,
-        }).select().single()
-      );
-    }
-  }
+  // Kitty settles the ticket (true-up, so a re-publish never double-counts
+  // and a price change is picked up as just the difference).
+  await settleTicketCost(draw, ticket, session.memberId);
 
   // Email every active member with notifications enabled — first publish only.
   // Personalised: this week's numbers, the draw date, and THEIR balance after

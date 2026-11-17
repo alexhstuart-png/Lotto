@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { balanceFromTransactions, chargeMembersForDraw } from '../lib/ledger.mjs';
+import { balanceFromTransactions, chargeMembersForDraw, ticketCostDeltaCents } from '../lib/ledger.mjs';
 
 /** In-memory stand-in for the transactions table enforcing the same unique
  *  (member_id, draw_id) where type='weekly_charge' constraint as Postgres. */
@@ -50,4 +50,15 @@ test('re-publish never double-charges (duplicate key -> skip)', async () => {
   const nextWeek = await chargeMembersForDraw(db, members, 'draw-2', 2500);
   assert.equal(nextWeek.charged.length, 2);
   assert.equal(db.rows.length, 4);
+});
+
+test('ticket cost settles against the kitty as a true-up, so price changes after publish flow through', () => {
+  // First publish: $294 ticket vs $275 charges -> kitty covers $19.
+  assert.equal(ticketCostDeltaCents({ costCents: 29400, collectedCents: 27500, recordedNetCents: 0 }), -1900);
+  // Re-publish with nothing changed -> nothing more moves.
+  assert.equal(ticketCostDeltaCents({ costCents: 29400, collectedCents: 27500, recordedNetCents: -1900 }), 0);
+  // $50 of extra lines bought after publishing -> kitty covers the extra $50 only.
+  assert.equal(ticketCostDeltaCents({ costCents: 34400, collectedCents: 27500, recordedNetCents: -1900 }), -5000);
+  // Price corrected downwards -> the kitty gets the difference back.
+  assert.equal(ticketCostDeltaCents({ costCents: 25000, collectedCents: 27500, recordedNetCents: -6900 }), 9400);
 });

@@ -1318,7 +1318,8 @@ ${section('email', 'Email log', `
         method: 'POST',
         body: { draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games: collectGames() },
       }),
-      (o) => `Saved ${o.games_saved} games${o.edited_published ? ' (published ticket edit — audit logged)' : ''}`));
+      (o) => `Saved ${o.games_saved} games${o.edited_published ? ' (published ticket edit — audit logged)' : ''}` +
+        (o.kitty_delta_cents ? ` — kitty ${o.kitty_delta_cents < 0 ? 'covers' : 'gets back'} ${money(Math.abs(o.kitty_delta_cents))} for the price change` : '')));
 
     on('publishTicketBtn', () => act('ticketMsg',
       async () => {

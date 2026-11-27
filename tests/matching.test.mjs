@@ -132,3 +132,29 @@ test('matchTicket keeps the PowerHit flag: 2 mains on a PowerHit line is a Div 9
   assert.equal(t.matches[2].powerballMatched, true); // PowerHit always hits the PB
   assert.equal(t.matches[2].isWinner, false); // but 1 main + PB is nothing
 });
+
+test('syndicate share scales winnings: 1/15 of a $14.10 Div 9 is $0.94 a line', async () => {
+  const { estimateWinnings } = await import('../lib/winnings-estimate.mjs');
+  const { validateShare, applyShareCents, shareLabel } = await import('../lib/shares.mjs');
+  const divisions = [{ division: 9, blocDividend: 14.1 }, { division: 7, blocDividend: 54.95 }];
+  const winners = [{ gameIndex: 1, division: 9 }, { gameIndex: 2, division: 9 }, { gameIndex: 3, division: 7 }];
+  // whole ticket: full dividends
+  assert.equal(estimateWinnings(winners, divisions).totalCents, 1410 + 1410 + 5495);
+  assert.equal(estimateWinnings(winners, divisions, { held: 1, total: 1 }).totalCents, 8315);
+  // 1 of 15 shares: each line is a fifteenth, rounded to the cent
+  const est = estimateWinnings(winners, divisions, { held: 1, total: 15 });
+  assert.deepEqual(est.lines.map((l) => l.amountCents), [94, 94, 366]);
+  assert.equal(est.totalCents, 554);
+  // 3 of 15 shares
+  assert.equal(applyShareCents(1410, 3, 15), 282);
+  // labels
+  assert.equal(shareLabel(1, 1), null);
+  assert.equal(shareLabel(1, 15), '1/15 share (6.7%)');
+  assert.equal(shareLabel(1, 4), '1/4 share (25%)');
+  // validation: blank = whole ticket; held can't exceed total; whole numbers only
+  assert.deepEqual(validateShare(undefined, undefined), { ok: true, held: 1, total: 1 });
+  assert.deepEqual(validateShare(1, 15), { ok: true, held: 1, total: 15 });
+  assert.equal(validateShare(16, 15).ok, false);
+  assert.equal(validateShare(1.5, 15).ok, false);
+  assert.equal(validateShare(0, 15).ok, false);
+});

@@ -289,6 +289,15 @@
     9: '2 winning numbers + Powerball',
   };
 
+  /** "1/15 share (6.7%)" for a syndicate ticket, '' for a whole ticket. */
+  const shareLabel = (held, total) => {
+    if (!total || total <= 1) return '';
+    const pct = (held / total) * 100;
+    return `${held}/${total} share (${Number.isInteger(pct) ? pct : pct.toFixed(1)}%)`;
+  };
+  /** Our part of an amount under a share, rounded to the cent. */
+  const applyShare = (cents, held, total) => (!total || total <= 1 ? cents : Math.round((cents * held) / total));
+
   /** Small line under the kitty figure: what it's made of. */
   const kittyBreakdown = (data) => data.members_credit_cents == null ? '' :
     `<div class="sub">${money(data.members_credit_cents)} members' prepaid · ${money(data.surplus_cents)} winnings &amp; surplus</div>`;
@@ -400,11 +409,12 @@
           <div style="text-align:right">
             <div class="stub-sub">${detail.games.length} games</div>
             <div class="stub-sub">${money(detail.ticket.cost_cents)}</div>
+            ${shareLabel(detail.ticket.shares_held, detail.ticket.shares_total) ? `<div class="stub-sub stub-share">${shareLabel(detail.ticket.shares_held, detail.ticket.shares_total)}</div>` : ''}
           </div>
         </div>
         ${lines}
         <div class="stub-meta">
-          <span>${detail.draw.draw_number ? 'Draw #' + detail.draw.draw_number : 'Syndicate entry'}</span>
+          <span>${detail.draw.draw_number ? 'Draw #' + detail.draw.draw_number : (detail.ticket.shares_total > 1 ? `Syndicate ticket — ${detail.ticket.shares_held} of ${detail.ticket.shares_total} shares` : 'Syndicate entry')}</span>
           <span>Good luck!</span>
         </div>
       </div>`;
@@ -742,7 +752,7 @@
         <div class="list-row" style="border:none;padding:0 0 6px">
           <div>
             <div class="primary">${isSfl ? '💠 Set for Life' : '🎱 Powerball'} ${t.note ? '· ' + esc(t.note) : ''}</div>
-            <div class="secondary">${t.draw_date ? esc(fmtDate(t.draw_date)) : ''} · ${t.games.length} game(s)</div>
+            <div class="secondary">${t.draw_date ? esc(fmtDate(t.draw_date)) : ''} · ${t.games.length} game(s)${shareLabel(t.shares_held, t.shares_total) ? ' · ' + shareLabel(t.shares_held, t.shares_total) : ''}</div>
           </div>
           ${statusChipHtml}
         </div>
@@ -784,6 +794,11 @@
         <div class="grid-2">
           <div><label>Draw date (optional)</label><input id="pDate" type="date"></div>
           <div><label>Note (optional)</label><input id="pNote" placeholder="Sat ticket"></div>
+        </div>
+        <label>Share of ticket — leave 1 of 1 unless it's a syndicate ticket (e.g. 1 of 15)</label>
+        <div class="grid-2">
+          <div><input id="pHeld" type="number" min="1" step="1" value="1" inputmode="numeric"></div>
+          <div><input id="pTotal" type="number" min="1" step="1" value="1" inputmode="numeric"></div>
         </div>
         <div class="form-msg" id="pMsg"></div>
         <button class="btn" id="pSaveBtn">Save ticket</button>
@@ -847,7 +862,10 @@
       try {
         await api('/admin/personal', {
           method: 'POST',
-          body: { game_type: gameType, games, draw_date: val('pDate') || null, note: val('pNote') },
+          body: {
+            game_type: gameType, games, draw_date: val('pDate') || null, note: val('pNote'),
+            shares_held: parseInt(val('pHeld') || '1', 10), shares_total: parseInt(val('pTotal') || '1', 10),
+          },
         });
         render();
       } catch (e) { msg('pMsg', e.message, false); }
@@ -1033,6 +1051,12 @@ ${section('ticket', 'Draw &amp; Ticket', `
           <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
           <label>Ticket cost ($)</label>
           <input id="ticketCost" type="number" step="0.01" min="0" value="${activeDraw && activeDraw.ticket ? (activeDraw.ticket.cost_cents / 100).toFixed(2) : ''}">
+          <label>Our share of the ticket — 1 of 1 for our own ticket, e.g. 1 of 15 for a Lott syndicate share</label>
+          <div class="grid-2">
+            <div><input id="ticketHeld" type="number" min="1" step="1" inputmode="numeric" value="${activeDraw && activeDraw.ticket ? activeDraw.ticket.shares_held : 1}"></div>
+            <div><input id="ticketTotal" type="number" min="1" step="1" inputmode="numeric" value="${activeDraw && activeDraw.ticket ? activeDraw.ticket.shares_total : 1}"></div>
+          </div>
+          <p class="share-hint" id="shareHint" style="color:var(--muted);font-size:12px;margin:-4px 0 8px"></p>
           <div class="form-msg" id="ticketMsg"></div>
           <div class="pill-btns">
             <button class="btn small secondary" id="saveTicketBtn">Save ticket</button>
@@ -1140,8 +1164,13 @@ ${section('email', 'Email log', `
      * that division; it stays pre-filled under Confirm Winnings.
      * @param {{id:string, draw_date:string}} draw
      * @param {{gameIndex:number, division:number}[]} lines  unconfirmed winners
+     * @param {{shares_held?:number, shares_total?:number}|null} ticket  for a
+     *        syndicate share, the full dividend is asked for and our share banked
      */
-    const promptWinnings = async (draw, lines) => {
+    const promptWinnings = async (draw, lines, ticket = null) => {
+      const held = ticket?.shares_held ?? 1;
+      const total = ticket?.shares_total ?? 1;
+      const shareText = shareLabel(held, total);
       const byDiv = new Map();
       for (const l of lines) {
         if (!byDiv.has(l.division)) byDiv.set(l.division, []);
@@ -1157,11 +1186,13 @@ ${section('email', 'Email log', `
           const answer = prompt(
             `🏆 Division ${division} — ${DIVISION_RULES[division] || ''}\n` +
             `Draw ${fmtDate(draw.draw_date)} · hit on ${games.length} line${games.length > 1 ? 's' : ''} (game${games.length > 1 ? 's' : ''} ${games.join(', ')})\n\n` +
-            `Enter the Division ${division} prize PER LINE ($) from the Lott's results page. Cancel to skip for now.`
+            `Enter the Division ${division} prize PER LINE ($) from the Lott's results page.` +
+            (shareText ? `\nWe hold a ${shareText} — enter the FULL dividend and ${held}/${total} of it is banked.` : '') +
+            ` Cancel to skip for now.`
           );
           if (answer === null) break;
           const parsed = Math.round(parseFloat(String(answer).replace(/[$,\s]/g, '')) * 100);
-          if (Number.isFinite(parsed) && parsed > 0) amountCents = parsed;
+          if (Number.isFinite(parsed) && parsed > 0) amountCents = applyShare(parsed, held, total);
           else alert('Enter a dollar amount above zero, e.g. 14.10');
         }
         if (amountCents === null) { skipped.push(...games); continue; }
@@ -1191,7 +1222,20 @@ ${section('email', 'Email log', `
         ? d.games.map(gameToLine).join('\n') : '';
       document.getElementById('ticketCost').value = d && d.ticket
         ? (d.ticket.cost_cents / 100).toFixed(2) : '';
+      document.getElementById('ticketHeld').value = d && d.ticket ? d.ticket.shares_held : 1;
+      document.getElementById('ticketTotal').value = d && d.ticket ? d.ticket.shares_total : 1;
+      updateShareHint();
     });
+    const updateShareHint = () => {
+      const held = parseInt(val('ticketHeld') || '1', 10);
+      const total = parseInt(val('ticketTotal') || '1', 10);
+      const label = shareLabel(held, total);
+      document.getElementById('shareHint').textContent = label
+        ? `${label} — every prize is banked at ${held}/${total} of the dividend`
+        : 'Whole ticket — prizes banked in full';
+    };
+    ['ticketHeld', 'ticketTotal'].forEach((id) => document.getElementById(id).addEventListener('input', updateShareHint));
+    updateShareHint();
 
     const showInvite = (out) => {
       const status = out.invite_email_sent
@@ -1313,20 +1357,18 @@ ${section('email', 'Email log', `
       return games;
     };
 
+    const ticketBody = () => ({
+      draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games: collectGames(),
+      shares_held: parseInt(val('ticketHeld') || '1', 10), shares_total: parseInt(val('ticketTotal') || '1', 10),
+    });
     on('saveTicketBtn', () => act('ticketMsg',
-      () => api('/admin/tickets', {
-        method: 'POST',
-        body: { draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games: collectGames() },
-      }),
+      () => api('/admin/tickets', { method: 'POST', body: ticketBody() }),
       (o) => `Saved ${o.games_saved} games${o.edited_published ? ' (published ticket edit — audit logged)' : ''}` +
         (o.kitty_delta_cents ? ` — kitty ${o.kitty_delta_cents < 0 ? 'covers' : 'gets back'} ${money(Math.abs(o.kitty_delta_cents))} for the price change` : '')));
 
     on('publishTicketBtn', () => act('ticketMsg',
       async () => {
-        const saved = await api('/admin/tickets', {
-          method: 'POST',
-          body: { draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games: collectGames() },
-        });
+        const saved = await api('/admin/tickets', { method: 'POST', body: ticketBody() });
         return api(`/admin/tickets/${saved.ticket_id}/publish`, { method: 'POST' });
       },
       (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, emailed ${o.emailed}`));
@@ -1346,7 +1388,7 @@ ${section('email', 'Email log', `
         const confirmed = new Set(out.confirmedGames || []);
         const unconfirmed = (out.winners || []).filter((w) => !confirmed.has(w.gameIndex));
         const d = draws.find((x) => x.draw.id === drawId);
-        out.prompted = unconfirmed.length && d ? await promptWinnings(d.draw, unconfirmed) : null;
+        out.prompted = unconfirmed.length && d ? await promptWinnings(d.draw, unconfirmed, d.ticket) : null;
         return out;
       },
       (o) => {
@@ -1426,7 +1468,7 @@ ${section('email', 'Email log', `
         const pend = pendingWins.get(drawId) || [];
         const d = draws.find((x) => x.draw.id === drawId);
         if (!pend.length || !d) throw new Error('No winning lines are waiting for an amount on that draw');
-        const out = await promptWinnings(d.draw, pend);
+        const out = await promptWinnings(d.draw, pend, d.ticket);
         pendingWins.set(drawId, pend.filter((p) => out.skipped.includes(p.gameIndex)));
         prefillWin();
         return out;

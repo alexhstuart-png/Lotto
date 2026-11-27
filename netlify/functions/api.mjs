@@ -63,7 +63,7 @@ async function drawDetail(draw) {
   let games = [];
   if (ticket) {
     games = must(
-      await supabase().from(T('games')).select('id, game_index, numbers, powerball, powerhit')
+      await supabase().from(T('games')).select('id, game_index, numbers, powerball, powerhit, shares_held, shares_total')
         .eq('ticket_id', ticket.id).order('game_index')
     );
   }
@@ -74,7 +74,11 @@ async function drawDetail(draw) {
     matching = matchTicket(games, { numbers: result.numbers, powerball: result.powerball });
     // Estimate from the draw's OFFICIAL published dividends (never a guess).
     if (matching.hasWinner) {
-      estimate = estimateWinnings(matching.winners, result.divisions, { held: ticket.shares_held, total: ticket.shares_total });
+      const shareByGame = new Map(games.map((g) => [g.game_index, {
+        held: g.shares_held ?? ticket.shares_held ?? 1, total: g.shares_total ?? ticket.shares_total ?? 1,
+      }]));
+      estimate = estimateWinnings(matching.winners, result.divisions,
+        (w) => shareByGame.get(w.gameIndex) || { held: ticket.shares_held ?? 1, total: ticket.shares_total ?? 1 });
     }
   }
   const winnings = must(await supabase().from(T('winnings')).select('*').eq('draw_id', draw.id));
@@ -423,7 +427,15 @@ async function adminSaveTicket(session, req) {
   for (let i = 0; i < body.games.length; i++) {
     const v = validateGame(body.games[i]);
     if (!v.ok) return err(`Game ${i + 1}: ${v.error}`);
-    games.push({ game_index: i + 1, numbers: v.numbers, powerball: v.powerball, powerhit: v.powerhit });
+    // A line may carry its own share (typed under a "share 1 of 15" header
+    // in the editor); otherwise it takes the ticket's default share.
+    const g = body.games[i];
+    const gs = validateShare(g.shares_held ?? share.held, g.shares_total ?? share.total);
+    if (!gs.ok) return err(`Game ${i + 1}: ${gs.error}`);
+    games.push({
+      game_index: i + 1, numbers: v.numbers, powerball: v.powerball, powerhit: v.powerhit,
+      shares_held: gs.held, shares_total: gs.total,
+    });
   }
   const draw = must(await supabase().from(T('draws')).select('*').eq('id', drawId).maybeSingle());
   if (!draw) return err('Draw not found', 404);
@@ -434,7 +446,7 @@ async function adminSaveTicket(session, req) {
   if (ticket) {
     if (editingPublished) {
       previousGames = must(
-        await supabase().from(T('games')).select('game_index, numbers, powerball, powerhit')
+        await supabase().from(T('games')).select('game_index, numbers, powerball, powerhit, shares_held, shares_total')
           .eq('ticket_id', ticket.id).order('game_index')
       );
     }
@@ -477,7 +489,17 @@ async function adminSaveTicket(session, req) {
       );
     }
   }
-  return json({ ticket_id: ticket.id, games_saved: games.length, edited_published: !!editingPublished, kitty_delta_cents: kittyDeltaCents });
+  const groups = new Map();
+  for (const g of games) {
+    const k = g.shares_total > 1 && g.shares_held !== g.shares_total ? `${g.shares_held}/${g.shares_total} share` : 'full';
+    groups.set(k, (groups.get(k) || 0) + 1);
+  }
+  const shareSummary = groups.size > 1 || !groups.has('full')
+    ? [...groups.entries()].map(([k, n]) => `${n} × ${k}`).join(', ') : null;
+  return json({
+    ticket_id: ticket.id, games_saved: games.length, edited_published: !!editingPublished,
+    kitty_delta_cents: kittyDeltaCents, share_summary: shareSummary,
+  });
 }
 
 /** Admin: read the game lines off a photo of the paper ticket (pre-fill only). */
@@ -502,7 +524,7 @@ async function adminPublishTicket(session, req, ticketId) {
   if (!ticket) return err('Ticket not found', 404);
   const draw = must(await supabase().from(T('draws')).select('*').eq('id', ticket.draw_id).single());
   const games = must(
-    await supabase().from(T('games')).select('game_index, numbers, powerball, powerhit')
+    await supabase().from(T('games')).select('game_index, numbers, powerball, powerhit, shares_held, shares_total')
       .eq('ticket_id', id).order('game_index')
   );
   if (games.length === 0) return err('Add at least one game before publishing');

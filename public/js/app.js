@@ -421,11 +421,12 @@
     if (detail.matching) for (const m of detail.matching.matches) matchById.set(m.gameIndex, m);
     const mixed = sharesVary(detail.games, detail.ticket);
     let lastShare = null;
+    let blockNo = 0;
     const lines = detail.games.map((g) => {
       const sh = gameShare(g, detail.ticket);
       const key = `${sh.held}/${sh.total}`;
       const divider = mixed && key !== lastShare
-        ? `<div class="share-divider">${isShared(sh.held, sh.total) ? `${sh.held}/${sh.total} syndicate share` : 'Full ticket'}</div>` : '';
+        ? `<div class="share-divider">Ticket ${++blockNo} — ${isShared(sh.held, sh.total) ? `${sh.held}/${sh.total} syndicate share` : 'Full ticket'}</div>` : '';
       lastShare = key;
       return divider + gameLine(g, matchById.get(g.game_index) || null);
     }).join('');
@@ -1126,8 +1127,13 @@ ${section('ticket', 'Draw &amp; Ticket', `
           <div class="pill-btns">
             <button class="btn small secondary" id="saveTicketBtn">Save ticket</button>
             <button class="btn small" id="publishTicketBtn">Publish (charge + email)</button>
+            <button class="btn small secondary" id="emailTicketBtn">📧 Email ticket now</button>
           </div>
-          <p style="color:var(--muted);font-size:12px">Publishing charges each active member ${money(data.settings.weekly_charge_cents)} once — re-publishing never double-charges.</p>
+          <div class="list-row" style="border:none;padding:6px 0 0">
+            <span style="font-size:13px">Email members when publishing <span style="color:var(--muted)">— turn off to add a second ticket first, then tap Email ticket now</span></span>
+            <span class="toggle"><input type="checkbox" id="publishEmail" checked><span class="track"></span></span>
+          </div>
+          <p style="color:var(--muted);font-size:12px">Publishing charges each active member ${money(data.settings.weekly_charge_cents)} once — re-publishing never double-charges. Email ticket now sends the whole ticket (every block) as one email, any time after publishing.</p>
         </div>
       `)}
 ${section('results', 'Official Results', `
@@ -1444,12 +1450,32 @@ ${section('email', 'Email log', `
       (o) => `Saved ${o.games_saved} games${o.share_summary ? ` (${o.share_summary})` : ''}${o.edited_published ? ' (published ticket edit — audit logged)' : ''}` +
         (o.kitty_delta_cents ? ` — kitty ${o.kitty_delta_cents < 0 ? 'covers' : 'gets back'} ${money(Math.abs(o.kitty_delta_cents))} for the price change` : '')));
 
+    const publishEmailToggle = document.getElementById('publishEmail');
+    const relabelPublish = () => {
+      document.getElementById('publishTicketBtn').textContent = publishEmailToggle.checked ? 'Publish (charge + email)' : 'Publish (charge only)';
+    };
+    publishEmailToggle.addEventListener('change', relabelPublish);
+    relabelPublish();
+
     on('publishTicketBtn', () => act('ticketMsg',
       async () => {
         const saved = await api('/admin/tickets', { method: 'POST', body: ticketBody() });
-        return api(`/admin/tickets/${saved.ticket_id}/publish`, { method: 'POST' });
+        return api(`/admin/tickets/${saved.ticket_id}/publish`, { method: 'POST', body: { email: publishEmailToggle.checked } });
       },
-      (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, emailed ${o.emailed}`));
+      (o) => `Published — charged ${o.charged} member(s), ${o.charge_skipped} already charged, ` +
+        (o.email_held ? 'email held back — add the next ticket, save, then tap Email ticket now'
+          : o.first_publish ? `emailed ${o.emailed}` : 'already emailed on first publish — tap Email ticket now to send the updated ticket')));
+
+    on('emailTicketBtn', () => act('ticketMsg',
+      async () => {
+        const d = draws.find((x) => x.draw.id === val('ticketDraw'));
+        if (!d || !d.ticket) throw new Error('Save and publish the ticket first');
+        const n = d.games.length;
+        if (!confirm(`Email this week's ticket (${n} game${n === 1 ? '' : 's'}, every block) to all members now?`)) throw new Error('Not sent');
+        return api(`/admin/tickets/${d.ticket.id}/email`, { method: 'POST' });
+      },
+      (o) => `Emailed the ticket (${o.games} games) to ${o.emailed} member(s)`,
+      { rerender: false }));
 
     on('resultsBtn', () => act('resultsMsg',
       async () => {

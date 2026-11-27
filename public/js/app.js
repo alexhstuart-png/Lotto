@@ -289,12 +289,13 @@
     9: '2 winning numbers + Powerball',
   };
 
-  /** "1/15 share (6.7%)" for a syndicate ticket, '' for a whole ticket. */
+  /** "Full ticket (1/1)" by default, "1/15 share (6.7%)" once a share is set. */
   const shareLabel = (held, total) => {
-    if (!total || total <= 1) return '';
+    if (!total || total <= 1 || held === total) return 'Full ticket (1/1)';
     const pct = (held / total) * 100;
     return `${held}/${total} share (${Number.isInteger(pct) ? pct : pct.toFixed(1)}%)`;
   };
+  const isShared = (held, total) => !!total && total > 1 && held !== total;
   /** Our part of an amount under a share, rounded to the cent. */
   const applyShare = (cents, held, total) => (!total || total <= 1 ? cents : Math.round((cents * held) / total));
 
@@ -409,12 +410,12 @@
           <div style="text-align:right">
             <div class="stub-sub">${detail.games.length} games</div>
             <div class="stub-sub">${money(detail.ticket.cost_cents)}</div>
-            ${shareLabel(detail.ticket.shares_held, detail.ticket.shares_total) ? `<div class="stub-sub stub-share">${shareLabel(detail.ticket.shares_held, detail.ticket.shares_total)}</div>` : ''}
+            <div class="stub-sub stub-share">${shareLabel(detail.ticket.shares_held, detail.ticket.shares_total)}</div>
           </div>
         </div>
         ${lines}
         <div class="stub-meta">
-          <span>${detail.draw.draw_number ? 'Draw #' + detail.draw.draw_number : (detail.ticket.shares_total > 1 ? `Syndicate ticket — ${detail.ticket.shares_held} of ${detail.ticket.shares_total} shares` : 'Syndicate entry')}</span>
+          <span>${isShared(detail.ticket.shares_held, detail.ticket.shares_total) ? `Syndicate ticket — ${detail.ticket.shares_held} of ${detail.ticket.shares_total} shares` : 'Full ticket — all ours'}${detail.draw.draw_number ? ' · Draw #' + detail.draw.draw_number : ''}</span>
           <span>Good luck!</span>
         </div>
       </div>`;
@@ -752,7 +753,7 @@
         <div class="list-row" style="border:none;padding:0 0 6px">
           <div>
             <div class="primary">${isSfl ? '💠 Set for Life' : '🎱 Powerball'} ${t.note ? '· ' + esc(t.note) : ''}</div>
-            <div class="secondary">${t.draw_date ? esc(fmtDate(t.draw_date)) : ''} · ${t.games.length} game(s)${shareLabel(t.shares_held, t.shares_total) ? ' · ' + shareLabel(t.shares_held, t.shares_total) : ''}</div>
+            <div class="secondary">${t.draw_date ? esc(fmtDate(t.draw_date)) : ''} · ${t.games.length} game(s) · ${shareLabel(t.shares_held ?? 1, t.shares_total ?? 1)}</div>
           </div>
           ${statusChipHtml}
         </div>
@@ -1170,7 +1171,7 @@ ${section('email', 'Email log', `
     const promptWinnings = async (draw, lines, ticket = null) => {
       const held = ticket?.shares_held ?? 1;
       const total = ticket?.shares_total ?? 1;
-      const shareText = shareLabel(held, total);
+      const shareText = isShared(held, total) ? shareLabel(held, total) : '';
       const byDiv = new Map();
       for (const l of lines) {
         if (!byDiv.has(l.division)) byDiv.set(l.division, []);
@@ -1229,10 +1230,9 @@ ${section('email', 'Email log', `
     const updateShareHint = () => {
       const held = parseInt(val('ticketHeld') || '1', 10);
       const total = parseInt(val('ticketTotal') || '1', 10);
-      const label = shareLabel(held, total);
-      document.getElementById('shareHint').textContent = label
-        ? `${label} — every prize is banked at ${held}/${total} of the dividend`
-        : 'Whole ticket — prizes banked in full';
+      document.getElementById('shareHint').textContent = isShared(held, total)
+        ? `${shareLabel(held, total)} — every prize is banked at ${held}/${total} of the dividend`
+        : 'Full ticket (1/1) — prizes banked in full';
     };
     ['ticketHeld', 'ticketTotal'].forEach((id) => document.getElementById(id).addEventListener('input', updateShareHint));
     updateShareHint();

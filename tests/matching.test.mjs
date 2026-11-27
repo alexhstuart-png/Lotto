@@ -148,7 +148,8 @@ test('syndicate share scales winnings: 1/15 of a $14.10 Div 9 is $0.94 a line', 
   // 3 of 15 shares
   assert.equal(applyShareCents(1410, 3, 15), 282);
   // labels
-  assert.equal(shareLabel(1, 1), null);
+  assert.equal(shareLabel(1, 1), 'Full ticket (1/1)');
+  assert.equal(shareLabel(15, 15), 'Full ticket (1/1)');
   assert.equal(shareLabel(1, 15), '1/15 share (6.7%)');
   assert.equal(shareLabel(1, 4), '1/4 share (25%)');
   // validation: blank = whole ticket; held can't exceed total; whole numbers only

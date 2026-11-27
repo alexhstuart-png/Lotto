@@ -296,6 +296,27 @@
     return `${held}/${total} share (${Number.isInteger(pct) ? pct : pct.toFixed(1)}%)`;
   };
   const isShared = (held, total) => !!total && total > 1 && held !== total;
+  /** Short form for line groups: "Full" or "1/15 share". */
+  const shareShort = (held, total) => (isShared(held, total) ? `${held}/${total} share` : 'Full');
+  /** A game's own share, falling back to the ticket's. */
+  const gameShare = (g, ticket) => ({
+    held: g.shares_held ?? ticket?.shares_held ?? 1, total: g.shares_total ?? ticket?.shares_total ?? 1,
+  });
+  /** Count lines per share on a ticket: [{held,total,count}] in ticket order. */
+  const shareGroups = (games, ticket) => {
+    const out = [];
+    for (const g of games || []) {
+      const sh = gameShare(g, ticket);
+      const last = out[out.length - 1];
+      if (last && last.held === sh.held && last.total === sh.total) last.count++;
+      else out.push({ ...sh, count: 1 });
+    }
+    return out;
+  };
+  const sharesVary = (games, ticket) => {
+    const gs = shareGroups(games, ticket);
+    return gs.length > 1 && new Set(gs.map((g) => `${g.held}/${g.total}`)).size > 1;
+  };
   /** Our part of an amount under a share, rounded to the cent. */
   const applyShare = (cents, held, total) => (!total || total <= 1 ? cents : Math.round((cents * held) / total));
 
@@ -398,7 +419,21 @@
     }
     const matchById = new Map();
     if (detail.matching) for (const m of detail.matching.matches) matchById.set(m.gameIndex, m);
-    const lines = detail.games.map((g) => gameLine(g, matchById.get(g.game_index) || null)).join('');
+    const mixed = sharesVary(detail.games, detail.ticket);
+    let lastShare = null;
+    const lines = detail.games.map((g) => {
+      const sh = gameShare(g, detail.ticket);
+      const key = `${sh.held}/${sh.total}`;
+      const divider = mixed && key !== lastShare
+        ? `<div class="share-divider">${isShared(sh.held, sh.total) ? `${sh.held}/${sh.total} syndicate share` : 'Full ticket'}</div>` : '';
+      lastShare = key;
+      return divider + gameLine(g, matchById.get(g.game_index) || null);
+    }).join('');
+    const groups = shareGroups(detail.games, detail.ticket);
+    const headShare = mixed ? 'Mixed shares' : shareLabel(groups[0]?.held ?? detail.ticket.shares_held, groups[0]?.total ?? detail.ticket.shares_total);
+    const footShare = mixed
+      ? groups.map((g) => `${shareShort(g.held, g.total)} × ${g.count}`).join(' · ')
+      : (isShared(groups[0]?.held ?? 1, groups[0]?.total ?? 1) ? `Syndicate ticket — ${groups[0].held} of ${groups[0].total} shares` : 'Full ticket — all ours');
     return `
       ${winnerCallouts(detail)}
       <div class="ticket-stub">
@@ -410,12 +445,12 @@
           <div style="text-align:right">
             <div class="stub-sub">${detail.games.length} games</div>
             <div class="stub-sub">${money(detail.ticket.cost_cents)}</div>
-            <div class="stub-sub stub-share">${shareLabel(detail.ticket.shares_held, detail.ticket.shares_total)}</div>
+            <div class="stub-sub stub-share">${headShare}</div>
           </div>
         </div>
         ${lines}
         <div class="stub-meta">
-          <span>${isShared(detail.ticket.shares_held, detail.ticket.shares_total) ? `Syndicate ticket — ${detail.ticket.shares_held} of ${detail.ticket.shares_total} shares` : 'Full ticket — all ours'}${detail.draw.draw_number ? ' · Draw #' + detail.draw.draw_number : ''}</span>
+          <span>${footShare}${detail.draw.draw_number ? ' · Draw #' + detail.draw.draw_number : ''}</span>
           <span>Good luck!</span>
         </div>
       </div>`;
@@ -923,6 +958,36 @@
   const gameToLine = (g) => g.numbers.join(' ') + ' ' + (g.powerhit ? 'PH' : g.powerball);
 
   /**
+   * A header line in the games editor that sets the share for the lines
+   * under it: "share 1 of 15", "share 1/15", "1/15" or "full".
+   * @returns {{held:number,total:number}|null}
+   */
+  const parseShareHeader = (line) => {
+    const t = line.trim();
+    if (/^full(\s*ticket)?$/i.test(t)) return { held: 1, total: 1 };
+    const m = t.match(/^(?:share\s*)?(\d+)\s*(?:of|\/)\s*(\d+)(?:\s*shares?)?$/i);
+    if (!m) return null;
+    return { held: parseInt(m[1], 10), total: parseInt(m[2], 10) };
+  };
+
+  /** Games -> editor text, with a share header wherever the share changes. */
+  const gamesToText = (games, ticket) => {
+    if (!games || !games.length) return '';
+    const mixed = sharesVary(games, ticket)
+      || games.some((g) => { const sh = gameShare(g, ticket); return sh.held !== (ticket?.shares_held ?? 1) || sh.total !== (ticket?.shares_total ?? 1); });
+    const out = [];
+    let last = null;
+    for (const g of games) {
+      const sh = gameShare(g, ticket);
+      const key = `${sh.held}/${sh.total}`;
+      if (mixed && key !== last) out.push(isShared(sh.held, sh.total) ? `share ${sh.held} of ${sh.total}` : 'full');
+      last = key;
+      out.push(gameToLine(g));
+    }
+    return out.join('\n');
+  };
+
+  /**
    * Parse the Lott's division list as copied from its results page, e.g.
    *   Division 9
    *   $14.10
@@ -978,8 +1043,7 @@
     const memberOptions = data.members.filter((m) => m.is_active)
       .map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
 
-    const currentGamesText = activeDraw && activeDraw.games.length
-      ? activeDraw.games.map(gameToLine).join('\n') : '';
+    const currentGamesText = activeDraw ? gamesToText(activeDraw.games, activeDraw.ticket) : '';
 
     const emailRows = data.email_logs.map((l) => `
       <div class="list-row">
@@ -1048,11 +1112,11 @@ ${section('ticket', 'Draw &amp; Ticket', `
           <input id="scanFile" type="file" accept="image/*" capture="environment" multiple style="display:none">
           <button class="btn secondary" id="scanBtn" style="margin:6px 0 12px">📷 Scan ticket photo(s)</button>
           <div class="form-msg" id="scanMsg"></div>
-          <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for System). PowerHit: mains then <code>PH</code></label>
+          <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for System). PowerHit: mains then <code>PH</code>. Bought more than one ticket? Put a header above each block: <code>share 1 of 15</code> or <code>full</code></label>
           <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
           <label>Ticket cost ($)</label>
           <input id="ticketCost" type="number" step="0.01" min="0" value="${activeDraw && activeDraw.ticket ? (activeDraw.ticket.cost_cents / 100).toFixed(2) : ''}">
-          <label>Our share of the ticket — 1 of 1 for our own ticket, e.g. 1 of 15 for a Lott syndicate share</label>
+          <label>Default share — 1 of 1 for our own ticket, e.g. 1 of 15 for a Lott syndicate share. Lines under a <code>share …</code> header in the games box use that header instead.</label>
           <div class="grid-2">
             <div><input id="ticketHeld" type="number" min="1" step="1" inputmode="numeric" value="${activeDraw && activeDraw.ticket ? activeDraw.ticket.shares_held : 1}"></div>
             <div><input id="ticketTotal" type="number" min="1" step="1" inputmode="numeric" value="${activeDraw && activeDraw.ticket ? activeDraw.ticket.shares_total : 1}"></div>
@@ -1169,24 +1233,30 @@ ${section('email', 'Email log', `
      *        syndicate share, the full dividend is asked for and our share banked
      */
     const promptWinnings = async (draw, lines, ticket = null) => {
-      const held = ticket?.shares_held ?? 1;
-      const total = ticket?.shares_total ?? 1;
-      const shareText = isShared(held, total) ? shareLabel(held, total) : '';
-      const byDiv = new Map();
+      // One prompt per (division, share): lines on a 1/15 share and full
+      // lines in the same division are asked for separately, since the
+      // amount banked differs.
+      const groups = new Map();
       for (const l of lines) {
-        if (!byDiv.has(l.division)) byDiv.set(l.division, []);
-        byDiv.get(l.division).push(l.gameIndex);
+        const held = l.shares_held ?? ticket?.shares_held ?? 1;
+        const total = l.shares_total ?? ticket?.shares_total ?? 1;
+        const key = `${l.division}|${held}/${total}`;
+        if (!groups.has(key)) groups.set(key, { division: l.division, held, total, games: [] });
+        groups.get(key).games.push(l.gameIndex);
       }
       let banked = 0;
       let totalCents = 0;
       const skipped = [];
-      for (const division of [...byDiv.keys()].sort((a, b) => a - b)) {
-        const games = byDiv.get(division).sort((a, b) => a - b);
+      const ordered = [...groups.values()].sort((x, y) => x.division - y.division || (x.held / x.total) - (y.held / y.total));
+      for (const grp of ordered) {
+        const { division, held, total } = grp;
+        const shareText = isShared(held, total) ? shareLabel(held, total) : '';
+        const games = grp.games.sort((a, b) => a - b);
         let amountCents = null;
         while (amountCents === null) {
           const answer = prompt(
             `🏆 Division ${division} — ${DIVISION_RULES[division] || ''}\n` +
-            `Draw ${fmtDate(draw.draw_date)} · hit on ${games.length} line${games.length > 1 ? 's' : ''} (game${games.length > 1 ? 's' : ''} ${games.join(', ')})\n\n` +
+            `Draw ${fmtDate(draw.draw_date)} · hit on ${games.length} line${games.length > 1 ? 's' : ''} (game${games.length > 1 ? 's' : ''} ${games.join(', ')})${shareText ? ` on our ${held}/${total} share` : ''}\n\n` +
             `Enter the Division ${division} prize PER LINE ($) from the Lott's results page.` +
             (shareText ? `\nWe hold a ${shareText} — enter the FULL dividend and ${held}/${total} of it is banked.` : '') +
             ` Cancel to skip for now.`
@@ -1219,8 +1289,7 @@ ${section('email', 'Email log', `
     // Ticket editor follows the selected draw.
     document.getElementById('ticketDraw').addEventListener('change', (e) => {
       const d = draws.find((x) => x.draw.id === e.target.value);
-      document.getElementById('ticketGames').value = d && d.games.length
-        ? d.games.map(gameToLine).join('\n') : '';
+      document.getElementById('ticketGames').value = d ? gamesToText(d.games, d.ticket) : '';
       document.getElementById('ticketCost').value = d && d.ticket
         ? (d.ticket.cost_cents / 100).toFixed(2) : '';
       document.getElementById('ticketHeld').value = d && d.ticket ? d.ticket.shares_held : 1;
@@ -1350,10 +1419,19 @@ ${section('email', 'Email log', `
 
     const collectGames = () => {
       const lines = val('ticketGames').split('\n').map((l) => l.trim()).filter(Boolean);
-      const games = lines.map((l) => parseGameLine(l));
-      if (games.length === 0 || games.some((g) => g === null)) {
-        throw new Error('Each line: 7 mains (or 8-20 for a System entry) then the Powerball last');
+      const games = [];
+      let share = null; // null = use the ticket's default share
+      for (const l of lines) {
+        const h = parseShareHeader(l);
+        if (h) {
+          if (h.held < 1 || h.total < 1 || h.held > h.total) throw new Error(`Share header "${l}": held can't exceed total`);
+          share = h; continue;
+        }
+        const g = parseGameLine(l);
+        if (!g) throw new Error(`"${l}" — each line: 7 mains (or 8-20 for a System entry) then the Powerball last, or a header like "share 1 of 15"`);
+        games.push(share ? { ...g, shares_held: share.held, shares_total: share.total } : g);
       }
+      if (games.length === 0) throw new Error('Add at least one game line');
       return games;
     };
 
@@ -1363,7 +1441,7 @@ ${section('email', 'Email log', `
     });
     on('saveTicketBtn', () => act('ticketMsg',
       () => api('/admin/tickets', { method: 'POST', body: ticketBody() }),
-      (o) => `Saved ${o.games_saved} games${o.edited_published ? ' (published ticket edit — audit logged)' : ''}` +
+      (o) => `Saved ${o.games_saved} games${o.share_summary ? ` (${o.share_summary})` : ''}${o.edited_published ? ' (published ticket edit — audit logged)' : ''}` +
         (o.kitty_delta_cents ? ` — kitty ${o.kitty_delta_cents < 0 ? 'covers' : 'gets back'} ${money(Math.abs(o.kitty_delta_cents))} for the price change` : '')));
 
     on('publishTicketBtn', () => act('ticketMsg',
@@ -1416,7 +1494,11 @@ ${section('email', 'Email log', `
       const estBy = new Map(((d.estimate && d.estimate.lines) || []).map((l) => [l.gameIndex, l.amountCents]));
       const pend = d.matching.winners
         .filter((w) => !confirmedIdx.has(w.gameIndex))
-        .map((w) => ({ gameIndex: w.gameIndex, division: w.division, amountCents: estBy.get(w.gameIndex) ?? null }));
+        .map((w) => {
+          const g = (d.games || []).find((x) => x.game_index === w.gameIndex);
+          const sh = gameShare(g || {}, d.ticket);
+          return { gameIndex: w.gameIndex, division: w.division, amountCents: estBy.get(w.gameIndex) ?? null, shares_held: sh.held, shares_total: sh.total };
+        });
       if (pend.length) pendingWins.set(d.draw.id, pend);
     }
     const winDrawSel = document.getElementById('winDraw');

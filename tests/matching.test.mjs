@@ -159,3 +159,14 @@ test('syndicate share scales winnings: 1/15 of a $14.10 Div 9 is $0.94 a line', 
   assert.equal(validateShare(1.5, 15).ok, false);
   assert.equal(validateShare(0, 15).ok, false);
 });
+
+test('mixed ticket: each line banked at its own share', async () => {
+  const { estimateWinnings } = await import('../lib/winnings-estimate.mjs');
+  const divisions = [{ division: 9, blocDividend: 14.1 }];
+  // games 1-2 on a 1/15 syndicate share, game 3 a full-price PowerPick line
+  const shareByGame = new Map([[1, { held: 1, total: 15 }], [2, { held: 1, total: 15 }], [3, { held: 1, total: 1 }]]);
+  const winners = [{ gameIndex: 1, division: 9 }, { gameIndex: 2, division: 9 }, { gameIndex: 3, division: 9 }];
+  const est = estimateWinnings(winners, divisions, (w) => shareByGame.get(w.gameIndex));
+  assert.deepEqual(est.lines.map((l) => l.amountCents), [94, 94, 1410]);
+  assert.equal(est.totalCents, 1598);
+});

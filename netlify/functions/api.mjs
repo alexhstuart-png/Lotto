@@ -27,6 +27,7 @@ import { createInviteToken, verifyInviteToken, validatePassword } from '../../li
 import { scanTicketImage } from '../../lib/ticket-scan.mjs';
 import { validateSflGame, validateSflResult, matchSflGame } from '../../lib/setforlife.mjs';
 import { estimateWinnings } from '../../lib/winnings-estimate.mjs';
+import { validateShare, applyShareCents } from '../../lib/shares.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -72,7 +73,9 @@ async function drawDetail(draw) {
   if (result && games.length > 0) {
     matching = matchTicket(games, { numbers: result.numbers, powerball: result.powerball });
     // Estimate from the draw's OFFICIAL published dividends (never a guess).
-    if (matching.hasWinner) estimate = estimateWinnings(matching.winners, result.divisions);
+    if (matching.hasWinner) {
+      estimate = estimateWinnings(matching.winners, result.divisions, { held: ticket.shares_held, total: ticket.shares_total });
+    }
   }
   const winnings = must(await supabase().from(T('winnings')).select('*').eq('draw_id', draw.id));
   return {
@@ -80,6 +83,7 @@ async function drawDetail(draw) {
     ticket: ticket ? {
       id: ticket.id, cost_cents: ticket.cost_cents, status: ticket.status,
       published_at: ticket.published_at,
+      shares_held: ticket.shares_held ?? 1, shares_total: ticket.shares_total ?? 1,
     } : null,
     games,
     result: result ? {
@@ -409,6 +413,9 @@ async function adminSaveTicket(session, req) {
   if (!drawId) return err('draw_id required');
   const costCents = validateCents(body.cost_cents ?? 0);
   if (costCents === null) return err('Invalid ticket cost');
+  // Syndicate share: 1/1 = whole ticket, 1/15 = one share of fifteen.
+  const share = validateShare(body.shares_held, body.shares_total);
+  if (!share.ok) return err(share.error);
   if (!Array.isArray(body.games) || body.games.length < 1 || body.games.length > 50) {
     return err('A ticket needs between 1 and 50 games');
   }
@@ -431,12 +438,18 @@ async function adminSaveTicket(session, req) {
           .eq('ticket_id', ticket.id).order('game_index')
       );
     }
-    must(await supabase().from(T('tickets')).update({ cost_cents: costCents }).eq('id', ticket.id).select().single());
+    must(
+      await supabase().from(T('tickets'))
+        .update({ cost_cents: costCents, shares_held: share.held, shares_total: share.total })
+        .eq('id', ticket.id).select().single()
+    );
     const { error: delErr } = await supabase().from(T('games')).delete().eq('ticket_id', ticket.id);
     if (delErr) return err('Could not update games');
   } else {
     ticket = must(
-      await supabase().from(T('tickets')).insert({ draw_id: drawId, cost_cents: costCents }).select().single()
+      await supabase().from(T('tickets'))
+        .insert({ draw_id: drawId, cost_cents: costCents, shares_held: share.held, shares_total: share.total })
+        .select().single()
     );
   }
   const { error: insErr } = await supabase().from(T('games'))
@@ -451,7 +464,10 @@ async function adminSaveTicket(session, req) {
     // difference so it keeps matching the cash.
     await auditLog({
       actorId: session.memberId, action: 'published_ticket_edited', entity: 'tickets', entityId: ticket.id,
-      details: { before: { games: previousGames, cost_cents: ticket.cost_cents }, after: { games, cost_cents: costCents } },
+      details: {
+        before: { games: previousGames, cost_cents: ticket.cost_cents, share: `${ticket.shares_held ?? 1}/${ticket.shares_total ?? 1}` },
+        after: { games, cost_cents: costCents, share: `${share.held}/${share.total}` },
+      },
     });
     if (costCents !== ticket.cost_cents) {
       const money = (c) => `$${(c / 100).toFixed(2)}`;
@@ -540,6 +556,7 @@ async function adminPublishTicket(session, req, ticketId) {
         costCents: ticket.cost_cents, kittyCents: kitty,
         balanceCents: balances.get(m.id) ?? 0,
         weeklyChargeCents: settings.weekly_charge_cents,
+        share: { held: ticket.shares_held ?? 1, total: ticket.shares_total ?? 1 },
       });
       const { sent } = await sendEmail({
         ...tpl, to: m.email, type: 'ticket_published', memberId: m.id, drawId: draw.id,
@@ -729,7 +746,9 @@ function matchPersonal(ticket) {
   }));
   const winners = matches.filter((m) => m.isWinner);
   const best = winners.reduce((b, m) => (b === null || m.division < b ? m.division : b), null);
-  const estimate = winners.length > 0 ? estimateWinnings(winners, ticket.result.divisions) : null;
+  const estimate = winners.length > 0
+    ? estimateWinnings(winners, ticket.result.divisions, { held: ticket.shares_held ?? 1, total: ticket.shares_total ?? 1 })
+    : null;
   return { matches, hasWinner: winners.length > 0, bestDivision: best, estimate };
 }
 
@@ -765,9 +784,12 @@ async function personalCreate(session, req) {
   if (!games) return err('Invalid games for that game type');
   const drawDate = body.draw_date ? validateDate(body.draw_date) : null;
   const note = typeof body.note === 'string' ? body.note.slice(0, 120) : null;
+  const share = validateShare(body.shares_held, body.shares_total);
+  if (!share.ok) return err(share.error);
   const ticket = must(
     await supabase().from(T('personal_tickets')).insert({
       owner_id: session.memberId, game_type: gameType, games, draw_date: drawDate, note,
+      shares_held: share.held, shares_total: share.total,
     }).select().single()
   );
   return json({ ticket: { ...ticket, matching: null } }, 201);

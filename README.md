@@ -29,6 +29,8 @@ conversions and demo-data removal.
    action that triggers matching, highlighting, win detection and status
    updates automatically. Saving again overwrites and recomputes.
 5. Prize amounts are never guessed; the admin confirms winnings explicitly.
+   A ticket can carry a syndicate share (e.g. 1 of 15): it is shown on the
+   ticket and every prize is banked at that fraction of the dividend.
 6. All secrets live in Netlify env vars; the browser only ever talks to
    `/api/*`; admin role is verified server-side on every request. An admin
    can grant or remove admin access for any other member from the Admin

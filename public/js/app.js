@@ -971,22 +971,6 @@
     return { held: parseInt(m[1], 10), total: parseInt(m[2], 10) };
   };
 
-  /** Games -> editor text, with a share header wherever the share changes. */
-  const gamesToText = (games, ticket) => {
-    if (!games || !games.length) return '';
-    const mixed = sharesVary(games, ticket)
-      || games.some((g) => { const sh = gameShare(g, ticket); return sh.held !== (ticket?.shares_held ?? 1) || sh.total !== (ticket?.shares_total ?? 1); });
-    const out = [];
-    let last = null;
-    for (const g of games) {
-      const sh = gameShare(g, ticket);
-      const key = `${sh.held}/${sh.total}`;
-      if (mixed && key !== last) out.push(isShared(sh.held, sh.total) ? `share ${sh.held} of ${sh.total}` : 'full');
-      last = key;
-      out.push(gameToLine(g));
-    }
-    return out.join('\n');
-  };
 
   /**
    * Parse the Lott's division list as copied from its results page, e.g.
@@ -1044,7 +1028,6 @@
     const memberOptions = data.members.filter((m) => m.is_active)
       .map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
 
-    const currentGamesText = activeDraw ? gamesToText(activeDraw.games, activeDraw.ticket) : '';
 
     const emailRows = data.email_logs.map((l) => `
       <div class="list-row">
@@ -1110,19 +1093,10 @@ ${section('ticket', 'Draw &amp; Ticket', `
         <div class="card">
           <label>Draw</label>
           <select id="ticketDraw">${drawOptions}</select>
-          <input id="scanFile" type="file" accept="image/*" capture="environment" multiple style="display:none">
-          <button class="btn secondary" id="scanBtn" style="margin:6px 0 12px">📷 Scan ticket photo(s)</button>
-          <div class="form-msg" id="scanMsg"></div>
-          <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for System). PowerHit: mains then <code>PH</code>. Bought more than one ticket? Put a header above each block: <code>share 1 of 15</code> or <code>full</code></label>
-          <textarea id="ticketGames" rows="6" placeholder="4 11 17 22 31 40 2 7">${esc(currentGamesText)}</textarea>
-          <label>Ticket cost ($)</label>
+          <div id="ticketBlocks"></div>
+          <button class="btn secondary" id="addTicketBtn" style="margin:2px 0 12px">➕ Add another ticket</button>
+          <label>Total cost of all tickets ($)</label>
           <input id="ticketCost" type="number" step="0.01" min="0" value="${activeDraw && activeDraw.ticket ? (activeDraw.ticket.cost_cents / 100).toFixed(2) : ''}">
-          <label>Default share — 1 of 1 for our own ticket, e.g. 1 of 15 for a Lott syndicate share. Lines under a <code>share …</code> header in the games box use that header instead.</label>
-          <div class="grid-2">
-            <div><input id="ticketHeld" type="number" min="1" step="1" inputmode="numeric" value="${activeDraw && activeDraw.ticket ? activeDraw.ticket.shares_held : 1}"></div>
-            <div><input id="ticketTotal" type="number" min="1" step="1" inputmode="numeric" value="${activeDraw && activeDraw.ticket ? activeDraw.ticket.shares_total : 1}"></div>
-          </div>
-          <p class="share-hint" id="shareHint" style="color:var(--muted);font-size:12px;margin:-4px 0 8px"></p>
           <div class="form-msg" id="ticketMsg"></div>
           <div class="pill-btns">
             <button class="btn small secondary" id="saveTicketBtn">Save ticket</button>
@@ -1292,25 +1266,101 @@ ${section('email', 'Email log', `
       } catch (e) { msg(msgId, e.message, false); }
     };
 
+    // ----- Ticket blocks: one block per physical ticket bought for the draw
+    // (e.g. a 1/15 syndicate share AND a full-price PowerPick). Each block has
+    // its own numbers and share; they are saved together as this week's
+    // ticket and go out in ONE email. -----
+    const blocksEl = document.getElementById('ticketBlocks');
+    let blocks = []; // [{ text, held, total }]
+
+    const blocksFromDraw = (d) => {
+      if (!d || !d.games || !d.games.length) return [{ text: '', held: 1, total: 1 }];
+      const out = [];
+      for (const g of d.games) {
+        const sh = gameShare(g, d.ticket);
+        const last = out[out.length - 1];
+        if (last && last.held === sh.held && last.total === sh.total) last.lines.push(gameToLine(g));
+        else out.push({ held: sh.held, total: sh.total, lines: [gameToLine(g)] });
+      }
+      return out.map((b) => ({ text: b.lines.join('\n'), held: b.held, total: b.total }));
+    };
+
+    const syncBlocksFromDom = () => {
+      blocks = Array.from(blocksEl.querySelectorAll('.ticket-block')).map((el) => ({
+        text: el.querySelector('[data-games]').value,
+        held: parseInt(el.querySelector('[data-held]').value || '1', 10),
+        total: parseInt(el.querySelector('[data-total]').value || '1', 10),
+      }));
+    };
+
+    const blockHint = (held, total) => isShared(held, total)
+      ? `${shareLabel(held, total)} — every prize on this ticket is banked at ${held}/${total} of the dividend`
+      : 'Full ticket (1/1) — prizes banked in full';
+
+    const renderBlocks = () => {
+      blocksEl.innerHTML = blocks.map((b, i) => `
+        <div class="ticket-block" data-block="${i}">
+          <div class="list-row" style="border:none;padding:0 0 6px">
+            <div class="primary" style="color:var(--gold)">Ticket ${i + 1}${blocks.length > 1 ? ` <span class="tag">${isShared(b.held, b.total) ? `${b.held}/${b.total} share` : 'full'}</span>` : ''}</div>
+            ${blocks.length > 1 ? `<button class="btn small danger" data-remove-block="${i}">Remove</button>` : ''}
+          </div>
+          <input type="file" accept="image/*" capture="environment" multiple style="display:none" data-scan-file>
+          <button class="btn small secondary" data-scan-btn style="margin:0 0 10px">📷 Scan ticket photo(s)</button>
+          <div class="form-msg" data-scan-msg></div>
+          <label>Games — one per line: mains then the Powerball last (7 mains standard, 8-20 for System). PowerHit: mains then <code>PH</code></label>
+          <textarea data-games rows="5" placeholder="4 11 17 22 31 40 2 7">${esc(b.text)}</textarea>
+          <label>Share of this ticket — 1 of 1 for our own ticket, e.g. 1 of 15 for a Lott syndicate share</label>
+          <div class="grid-2">
+            <div><input data-held type="number" min="1" step="1" inputmode="numeric" value="${b.held}"></div>
+            <div><input data-total type="number" min="1" step="1" inputmode="numeric" value="${b.total}"></div>
+          </div>
+          <p data-hint style="color:var(--muted);font-size:12px;margin:-4px 0 4px">${blockHint(b.held, b.total)}</p>
+        </div>`).join('');
+
+      blocksEl.querySelectorAll('.ticket-block').forEach((el) => {
+        const held = el.querySelector('[data-held]');
+        const total = el.querySelector('[data-total]');
+        const hint = el.querySelector('[data-hint]');
+        const refresh = () => { hint.textContent = blockHint(parseInt(held.value || '1', 10), parseInt(total.value || '1', 10)); };
+        held.addEventListener('input', refresh);
+        total.addEventListener('input', refresh);
+        const fileInput = el.querySelector('[data-scan-file]');
+        const scanBtn = el.querySelector('[data-scan-btn]');
+        scanBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => scanInto(el, Array.from(fileInput.files || [])).finally(() => { fileInput.value = ''; }));
+      });
+      blocksEl.querySelectorAll('[data-remove-block]').forEach((btn) => btn.addEventListener('click', () => {
+        syncBlocksFromDom();
+        const i = parseInt(btn.dataset.removeBlock, 10);
+        const b = blocks[i];
+        const n = b.text.split('\n').filter((l) => l.trim()).length;
+        if (n && !confirm(`Remove Ticket ${i + 1} (${n} line${n === 1 ? '' : 's'}) from the editor? Nothing is saved until you tap Save ticket.`)) return;
+        blocks.splice(i, 1);
+        renderBlocks();
+      }));
+    };
+
+    document.getElementById('addTicketBtn').addEventListener('click', () => {
+      syncBlocksFromDom();
+      // A second ticket is usually the other kind: full if the first is a share, and vice versa.
+      const first = blocks[0] || { held: 1, total: 1 };
+      blocks.push(isShared(first.held, first.total) ? { text: '', held: 1, total: 1 } : { text: '', held: 1, total: 15 });
+      renderBlocks();
+      const last = blocksEl.querySelector('.ticket-block:last-child');
+      last.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      last.querySelector('[data-games]').focus();
+    });
+
     // Ticket editor follows the selected draw.
     document.getElementById('ticketDraw').addEventListener('change', (e) => {
       const d = draws.find((x) => x.draw.id === e.target.value);
-      document.getElementById('ticketGames').value = d ? gamesToText(d.games, d.ticket) : '';
+      blocks = blocksFromDraw(d);
+      renderBlocks();
       document.getElementById('ticketCost').value = d && d.ticket
         ? (d.ticket.cost_cents / 100).toFixed(2) : '';
-      document.getElementById('ticketHeld').value = d && d.ticket ? d.ticket.shares_held : 1;
-      document.getElementById('ticketTotal').value = d && d.ticket ? d.ticket.shares_total : 1;
-      updateShareHint();
     });
-    const updateShareHint = () => {
-      const held = parseInt(val('ticketHeld') || '1', 10);
-      const total = parseInt(val('ticketTotal') || '1', 10);
-      document.getElementById('shareHint').textContent = isShared(held, total)
-        ? `${shareLabel(held, total)} — every prize is banked at ${held}/${total} of the dividend`
-        : 'Full ticket (1/1) — prizes banked in full';
-    };
-    ['ticketHeld', 'ticketTotal'].forEach((id) => document.getElementById(id).addEventListener('input', updateShareHint));
-    updateShareHint();
+    blocks = blocksFromDraw(activeDraw);
+    renderBlocks();
 
     const showInvite = (out) => {
       const status = out.invite_email_sent
@@ -1373,21 +1423,19 @@ ${section('email', 'Email log', `
     // Multiple tickets: each scan APPENDS to the games list (duplicate lines
     // skipped), so you can snap ticket 1, then ticket 2 — or select several
     // photos at once — and publish the lot together.
-    const scanInput = document.getElementById('scanFile');
-    on('scanBtn', () => scanInput.click());
-    scanInput.addEventListener('change', async () => {
-      const files = Array.from(scanInput.files || []);
-      scanInput.value = '';
+    async function scanInto(blockEl, files) {
       if (!files.length) return;
-      const btn = document.getElementById('scanBtn');
+      const btn = blockEl.querySelector('[data-scan-btn]');
+      const ta = blockEl.querySelector('[data-games]');
+      const msgEl = blockEl.querySelector('[data-scan-msg]');
+      const say = (text, ok) => { msgEl.textContent = text; msgEl.className = 'form-msg ' + (ok ? 'ok' : 'error'); };
       btn.disabled = true;
-      const ta = document.getElementById('ticketGames');
       let added = 0;
       let skippedDup = 0;
       const notes = [];
       try {
         for (let i = 0; i < files.length; i++) {
-          msg('scanMsg', `Reading photo ${i + 1} of ${files.length}…`, true);
+          say(`Reading photo ${i + 1} of ${files.length}…`, true);
           const img = await createImageBitmap(files[i]);
           const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
           const canvas = document.createElement('canvas');
@@ -1416,35 +1464,40 @@ ${section('email', 'Email log', `
           skippedDup ? `${skippedDup} duplicate(s) skipped` : '',
           ...notes,
         ].filter(Boolean).join(' · ');
-        msg('scanMsg', `Added ${added} game(s) from ${files.length} photo(s) — ${total} total${extras ? ` (${extras})` : ''}. CHECK every number before publishing`, true);
+        say(`Added ${added} game(s) from ${files.length} photo(s) — ${total} on this ticket${extras ? ` (${extras})` : ''}. CHECK every number before publishing`, true);
       } catch (e) {
-        msg('scanMsg', e.message, false);
+        say(e.message, false);
       }
       btn.disabled = false;
-    });
+    }
 
     const collectGames = () => {
-      const lines = val('ticketGames').split('\n').map((l) => l.trim()).filter(Boolean);
+      syncBlocksFromDom();
       const games = [];
-      let share = null; // null = use the ticket's default share
-      for (const l of lines) {
-        const h = parseShareHeader(l);
-        if (h) {
-          if (h.held < 1 || h.total < 1 || h.held > h.total) throw new Error(`Share header "${l}": held can't exceed total`);
-          share = h; continue;
+      blocks.forEach((b, bi) => {
+        const label = blocks.length > 1 ? `Ticket ${bi + 1}: ` : '';
+        if (!(b.held >= 1 && b.total >= 1 && b.held <= b.total)) throw new Error(`${label}share must be like 1 of 15 — held can't exceed total`);
+        const lines = b.text.split('\n').map((l) => l.trim()).filter(Boolean);
+        if (lines.length === 0) throw new Error(`${label}add at least one game line${blocks.length > 1 ? ', or remove the empty ticket' : ''}`);
+        for (const l of lines) {
+          if (parseShareHeader(l)) continue; // old-style header lines are ignored; the block's share applies
+          const g = parseGameLine(l);
+          if (!g) throw new Error(`${label}"${l}" — each line: 7 mains (or 8-20 for a System entry) then the Powerball last`);
+          games.push({ ...g, shares_held: b.held, shares_total: b.total });
         }
-        const g = parseGameLine(l);
-        if (!g) throw new Error(`"${l}" — each line: 7 mains (or 8-20 for a System entry) then the Powerball last, or a header like "share 1 of 15"`);
-        games.push(share ? { ...g, shares_held: share.held, shares_total: share.total } : g);
-      }
-      if (games.length === 0) throw new Error('Add at least one game line');
+      });
+      if (games.length > 50) throw new Error(`${games.length} lines — the app takes up to 50 per draw`);
       return games;
     };
 
-    const ticketBody = () => ({
-      draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games: collectGames(),
-      shares_held: parseInt(val('ticketHeld') || '1', 10), shares_total: parseInt(val('ticketTotal') || '1', 10),
-    });
+    const ticketBody = () => {
+      const games = collectGames();
+      // The first block's share is the ticket's default; every line carries its own anyway.
+      return {
+        draw_id: val('ticketDraw'), cost_cents: dollars('ticketCost'), games,
+        shares_held: blocks[0]?.held ?? 1, shares_total: blocks[0]?.total ?? 1,
+      };
+    };
     on('saveTicketBtn', () => act('ticketMsg',
       () => api('/admin/tickets', { method: 'POST', body: ticketBody() }),
       (o) => `Saved ${o.games_saved} games${o.share_summary ? ` (${o.share_summary})` : ''}${o.edited_published ? ' (published ticket edit — audit logged)' : ''}` +

@@ -517,9 +517,63 @@ async function adminScanTicket(session, req) {
   }
 }
 
+/**
+ * Email this week's ticket to every active member with notifications on.
+ * Personalised: the numbers, the draw date, and THEIR balance. Used on
+ * publish (unless the admin holds the email back) and by the explicit
+ * "Email ticket" button, e.g. once a second ticket has been added.
+ */
+async function sendTicketEmails({ draw, ticket, games, settings, allMembers }) {
+  const kitty = (await potCents()).pot_cents; // same figure the app shows
+  const audience = selectBroadcastAudience(allMembers);
+  const balances = await memberBalancesCents(audience.map((m) => m.id));
+  let emailed = 0;
+  for (const m of audience) {
+    const tpl = ticketPublishedEmail({
+      memberName: m.name, drawDate: draw.draw_date, games,
+      costCents: ticket.cost_cents, kittyCents: kitty,
+      balanceCents: balances.get(m.id) ?? 0,
+      weeklyChargeCents: settings.weekly_charge_cents,
+      share: { held: ticket.shares_held ?? 1, total: ticket.shares_total ?? 1 },
+    });
+    const { sent } = await sendEmail({
+      ...tpl, to: m.email, type: 'ticket_published', memberId: m.id, drawId: draw.id,
+    });
+    if (sent) emailed++;
+  }
+  return emailed;
+}
+
+/** Admin: email the current ticket to members now (any time after publish). */
+async function adminEmailTicket(session, ticketId) {
+  const id = validateUuid(ticketId);
+  if (!id) return err('Invalid ticket id');
+  const ticket = must(await supabase().from(T('tickets')).select('*').eq('id', id).maybeSingle());
+  if (!ticket) return err('Ticket not found', 404);
+  if (ticket.status !== 'published') return err('Publish the ticket first — the email shows members what they have been charged for');
+  const draw = must(await supabase().from(T('draws')).select('*').eq('id', ticket.draw_id).single());
+  const games = must(
+    await supabase().from(T('games')).select('game_index, numbers, powerball, powerhit, shares_held, shares_total')
+      .eq('ticket_id', id).order('game_index')
+  );
+  if (games.length === 0) return err('The ticket has no games');
+  const settings = await getSettings();
+  const allMembers = must(await supabase().from(T('members')).select('*'));
+  const emailed = await sendTicketEmails({ draw, ticket, games, settings, allMembers });
+  await auditLog({
+    actorId: session.memberId, action: 'ticket_emailed', entity: 'tickets', entityId: id,
+    details: { games: games.length, emailed },
+  });
+  return json({ emailed, games: games.length });
+}
+
 async function adminPublishTicket(session, req, ticketId) {
   const id = validateUuid(ticketId);
   if (!id) return err('Invalid ticket id');
+  // { email: false } publishes (charges) without emailing, so a second
+  // ticket can be added and everything sent as ONE email afterwards.
+  const body = await readBody(req);
+  const wantEmail = body.email !== false;
   const ticket = must(await supabase().from(T('tickets')).select('*').eq('id', id).maybeSingle());
   if (!ticket) return err('Ticket not found', 404);
   const draw = must(await supabase().from(T('draws')).select('*').eq('id', ticket.draw_id).single());
@@ -564,27 +618,12 @@ async function adminPublishTicket(session, req, ticketId) {
   // and a price change is picked up as just the difference).
   await settleTicketCost(draw, ticket, session.memberId);
 
-  // Email every active member with notifications enabled — first publish only.
-  // Personalised: this week's numbers, the draw date, and THEIR balance after
-  // the charge (balances computed post-charge so the email reflects reality).
+  // Email members on the FIRST publish (balances computed post-charge so the
+  // email reflects reality) unless the admin held the email back to add
+  // another ticket first — then the "Email ticket" button sends it.
   let emailed = 0;
-  if (firstPublish) {
-    const kitty = (await potCents()).pot_cents; // same figure the app shows
-    const audience = selectBroadcastAudience(allMembers);
-    const balances = await memberBalancesCents(audience.map((m) => m.id));
-    for (const m of audience) {
-      const tpl = ticketPublishedEmail({
-        memberName: m.name, drawDate: draw.draw_date, games,
-        costCents: ticket.cost_cents, kittyCents: kitty,
-        balanceCents: balances.get(m.id) ?? 0,
-        weeklyChargeCents: settings.weekly_charge_cents,
-        share: { held: ticket.shares_held ?? 1, total: ticket.shares_total ?? 1 },
-      });
-      const { sent } = await sendEmail({
-        ...tpl, to: m.email, type: 'ticket_published', memberId: m.id, drawId: draw.id,
-      });
-      if (sent) emailed++;
-    }
+  if (firstPublish && wantEmail) {
+    emailed = await sendTicketEmails({ draw, ticket, games, settings, allMembers });
   }
 
   return json({
@@ -593,6 +632,7 @@ async function adminPublishTicket(session, req, ticketId) {
     charged: chargeSummary.charged.length,
     charge_skipped: chargeSummary.skipped.length,
     emailed,
+    email_held: firstPublish && !wantEmail,
   });
 }
 
@@ -947,6 +987,8 @@ export default async function handler(req) {
       if (path === '/api/admin/tickets/scan' && method === 'POST') return await adminScanTicket(session, req);
       const publishMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)\/publish$/);
       if (publishMatch && method === 'POST') return await adminPublishTicket(session, req, publishMatch[1]);
+      const emailMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)\/email$/);
+      if (emailMatch && method === 'POST') return await adminEmailTicket(session, emailMatch[1]);
       if (path === '/api/admin/results' && method === 'POST') return await adminEnterResults(session, req);
       if (path === '/api/admin/payments' && method === 'POST') return await adminRecordPayment(session, req);
       if (path === '/api/admin/adjustments' && method === 'POST') return await adminAdjustment(session, req);
